@@ -1,0 +1,32 @@
+# Gemma 3 270M Multi-Layer Simultaneous SAE Training Config
+model_name_or_path: "google/gemma-3-270m"
+torch_dtype: "bfloat16"
+load_in_4bit: false
+context_length: 512
+mask_bos: true
+
+# Train 6 depth layers simultaneously from 1 LLM forward pass
+hook_points:
+  - "model.layers.3"
+  - "model.layers.6"
+  - "model.layers.9"
+  - "model.layers.12"
+  - "model.layers.15"
+  - "model.layers.17"
+
+architecture: "batch_topk"
+expansion_factor: 16       # d_sae = 640 * 16 = 10,240 features per layer
+k: 32                      # BatchTopK per layer
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1000
+total_steps: 15000
+checkpoint_steps: 2500
+output_dir: "checkpoints/gemma3_270m_multi_sae"
+wandb_project: "gemma3-270m-sae"
+seed: 42

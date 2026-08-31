@@ -1,12 +1,15 @@
 import argparse
+import os
+import sys
+import yaml
 import torch
+
+# Ensure project root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from src.utils.hf_helpers import load_model_and_tokenizer
 from src.architectures.registry import get_dictionary_cls
 from src.circuits.steering import FeatureSteeringEngine
-
-
-import os
-import yaml
 
 
 def load_yaml(path: str) -> dict:

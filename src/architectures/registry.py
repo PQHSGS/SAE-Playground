@@ -10,16 +10,23 @@ def register_dictionary(name: str) -> Callable[[Type[BaseDictionary]], Type[Base
     """
     def decorator(cls: Type[BaseDictionary]) -> Type[BaseDictionary]:
         DICTIONARY_REGISTRY[name.lower()] = cls
+        DICTIONARY_REGISTRY[cls.__name__.lower()] = cls
         return cls
     return decorator
 
 
 def get_dictionary_cls(name: str) -> Type[BaseDictionary]:
     name_clean = name.lower().replace("-", "_")
-    if name_clean not in DICTIONARY_REGISTRY:
-        available = list(DICTIONARY_REGISTRY.keys())
-        raise KeyError(f"Architecture '{name}' not found in registry. Available architectures: {available}")
-    return DICTIONARY_REGISTRY[name_clean]
+    if name_clean in DICTIONARY_REGISTRY:
+        return DICTIONARY_REGISTRY[name_clean]
+    
+    # Also check if class name matches directly
+    for k, cls in DICTIONARY_REGISTRY.items():
+        if cls.__name__.lower() == name_clean or k == name_clean:
+            return cls
+
+    available = list(DICTIONARY_REGISTRY.keys())
+    raise KeyError(f"Architecture '{name}' not found in registry. Available architectures: {available}")
 
 
 def build_dictionary(architecture: str, d_in: int, d_sae: int, **kwargs) -> BaseDictionary:

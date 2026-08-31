@@ -1,8 +1,12 @@
 import argparse
 import os
+import sys
 import yaml
 import torch
 from dotenv import load_dotenv
+
+# Ensure project root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.config import DictionaryConfig, HookConfig, TrainingConfig
 from src.core.activation_buffer import ActivationBuffer
@@ -113,28 +117,8 @@ def main():
             "output_dir", "wandb_project", "seed"
         ]}
     }
-    if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
-        kwargs["n_layers"] = len(hook_points)
-
-    dict_model = build_dictionary(
-        architecture=arch_name,
-        d_in=d_in,
-        d_sae=d_sae,
-        **kwargs
-    )
-
-    # Streaming activation reservoir buffer
-    full_buffer = ActivationBuffer(
-        model=model,
-        tokenizer=tokenizer,
-        hook_points=hook_points,
-        target_hook_points=target_hook_points,
-        dataset_path=dataset_path,
-        dataset_name=dataset_name,
-        batch_size=batch_size,
-        buffer_size=65536,
-        device=device,
-    )
+    # Check if multi-SAE mode (multiple hook points for standard SAE architectures)
+    is_multi_sae = len(hook_points) > 1 and arch_name not in ["crosscoder", "batch_topk_crosscoder"]
 
     # Training configuration
     training_cfg = TrainingConfig(
@@ -149,16 +133,77 @@ def main():
         output_dir=output_dir,
         wandb_project=wandb_project,
         wandb_run_name=wandb_run_name,
+        use_ghost_grads=use_ghost_grads,
+        ghost_grad_coeff=ghost_grad_coeff,
+        seed=seed,
     )
 
-    trainer = DictionaryTrainer(
-        dictionary_model=dict_model,
-        activation_buffer=full_buffer,
-        config=training_cfg,
-        device=device,
-    )
+    if is_multi_sae:
+        from src.core.multi_dictionary import MultiLayerDictionary
+        from src.training.multi_trainer import MultiSAETrainer
 
-    trainer.train()
+        logger.info(f"Setting up Multi-Layer SAE training across {len(hook_points)} layers: {hook_points}")
+        dict_map = {}
+        for hp in hook_points:
+            dict_map[hp] = build_dictionary(
+                architecture=arch_name,
+                d_in=d_in,
+                d_sae=d_sae,
+                **kwargs
+            )
+        multi_dict = MultiLayerDictionary(dict_map)
+
+        full_buffer = ActivationBuffer(
+            model=model,
+            tokenizer=tokenizer,
+            hook_points=hook_points,
+            target_hook_points=target_hook_points,
+            dataset_path=dataset_path,
+            dataset_name=dataset_name,
+            batch_size=batch_size,
+            buffer_size=min(32768, batch_size * 8),
+            device=device,
+            return_dict=True,
+        )
+
+        trainer = MultiSAETrainer(
+            multi_dictionary=multi_dict,
+            activation_buffer=full_buffer,
+            config=training_cfg,
+            device=device,
+        )
+        trainer.train()
+
+    else:
+        if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
+            kwargs["n_layers"] = len(hook_points)
+
+        dict_model = build_dictionary(
+            architecture=arch_name,
+            d_in=d_in,
+            d_sae=d_sae,
+            **kwargs
+        )
+
+        full_buffer = ActivationBuffer(
+            model=model,
+            tokenizer=tokenizer,
+            hook_points=hook_points,
+            target_hook_points=target_hook_points,
+            dataset_path=dataset_path,
+            dataset_name=dataset_name,
+            batch_size=batch_size,
+            buffer_size=65536,
+            device=device,
+        )
+
+        trainer = DictionaryTrainer(
+            dictionary_model=dict_model,
+            activation_buffer=full_buffer,
+            config=training_cfg,
+            device=device,
+        )
+        trainer.train()
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ class ActivationBuffer:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         dtype: torch.dtype = torch.float32,
         normalize_activations: bool = True,
+        return_dict: bool = False,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -49,6 +50,7 @@ class ActivationBuffer:
         self.device = device
         self.dtype = dtype
         self.normalize_activations = normalize_activations
+        self.return_dict = return_dict
 
         self.hook_manager = HookManager(model)
         
@@ -175,13 +177,17 @@ class ActivationBuffer:
         self.scale_factor = math.sqrt(d_in) / (avg_norm + 1e-8)
         return self.mean.to(dtype=self.dtype, device=self.device), self.scale_factor
 
-    def next_batch(self) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], List[torch.Tensor]]:
+    def next_batch(self) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
         if self.tokens_buffered == 0 or (self.buffer_idx + self.batch_size) > self.tokens_buffered:
             self._fill_buffer()
 
         start = self.buffer_idx
         end = start + self.batch_size
         self.buffer_idx = end
+
+        # Multi-SAE dictionary mode
+        if self.return_dict:
+            return {hp: self.buffer[hp][start:end].contiguous() for hp in self.hook_points}
 
         # Transcoder mode
         if self.target_hook_points is not None:
