@@ -57,7 +57,7 @@ class TrainingConfig(BaseModel):
     eval_steps: int = Field(1000, description="Evaluation frequency in steps")
     
     # Dead feature & Ghost grad handling
-    dead_feature_threshold: int = Field(10_000_000, description="Token count without activation before a feature is marked dead")
+    dead_feature_threshold: int = Field(1_000_000, description="Token count without activation before a feature is marked dead")
     use_ghost_grads: bool = Field(True, description="Enable Ghost Gradients auxiliary residual pass for dead features")
     ghost_grad_coeff: float = Field(0.1, description="Ghost gradient scaling factor")
     
