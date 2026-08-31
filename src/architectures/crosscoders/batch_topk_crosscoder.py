@@ -13,9 +13,10 @@ class BatchTopKCrosscoder(BaseCrosscoder):
     to eliminate dead features across cross-layer dictionaries.
     """
 
-    def __init__(self, n_layers: int, d_in: int, d_sae: int, k: int = 64, **kwargs):
-        super().__init__(n_layers=n_layers, d_in=d_in, d_sae=d_sae, k=k, **kwargs)
+    def __init__(self, n_layers: int, d_in: int, d_sae: int, k: int = 64, aux_loss_coeff: float = 1.0 / 32.0, **kwargs):
+        super().__init__(n_layers=n_layers, d_in=d_in, d_sae=d_sae, k=k, aux_loss_coeff=aux_loss_coeff, **kwargs)
         self.k = k
+        self.aux_loss_coeff = aux_loss_coeff
 
         self.w_enc = nn.Parameter(torch.empty(n_layers, d_in, d_sae))
         self.b_enc = nn.Parameter(torch.zeros(d_sae))
@@ -65,14 +66,51 @@ class BatchTopKCrosscoder(BaseCrosscoder):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
-        x_hat = self.decode(f)
+        x_centered = x - self.b_dec
+        pre_acts = torch.einsum("...li,lid->...d", x_centered, self.w_enc) + self.b_enc
+        pre_acts = torch.relu(pre_acts)
 
+        orig_shape = pre_acts.shape
+        flat = pre_acts.view(-1, self.d_sae)
+        batch_tokens = flat.shape[0]
+
+        if self.training:
+            total_k = min(batch_tokens * self.k, flat.numel())
+            flat_view = flat.view(-1)
+            val, idx = torch.topk(flat_view, k=total_k)
+            sparse_flat = torch.zeros_like(flat_view)
+            sparse_flat.scatter_(dim=0, index=idx, src=val)
+            f = sparse_flat.view(orig_shape)
+        else:
+            val, idx = torch.topk(pre_acts, k=min(self.k, self.d_sae), dim=-1)
+            f = torch.zeros_like(pre_acts)
+            f.scatter_(dim=-1, index=idx, src=val)
+
+        x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
+
+        loss_dict = {"mse_loss": mse_loss}
+        total_loss = mse_loss
+
+        # Auxiliary loss for dead latents (OpenAI Aux Loss across multi-layer reconstructions)
+        if dead_mask is not None and dead_mask.any() and self.aux_loss_coeff > 0:
+            residual = target - x_hat
+            dead_pre_acts = pre_acts * dead_mask.float()
+            dead_k = min(self.k, int(dead_mask.sum().item()))
+            if dead_k > 0:
+                dead_val, dead_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)
+                dead_f = torch.zeros_like(dead_pre_acts)
+                dead_f.scatter_(dim=-1, index=dead_idx, src=dead_val)
+                aux_recon = torch.einsum("...d,ldi->...li", dead_f, self.w_dec)
+                aux_loss = self.aux_loss_coeff * nn.functional.mse_loss(aux_recon, residual)
+                total_loss = total_loss + aux_loss
+                loss_dict["aux_loss"] = aux_loss
+
+        loss_dict["total_loss"] = total_loss
         return DictionaryOutput(
             reconstructed=x_hat,
             feature_acts=f,
-            loss=mse_loss,
-            loss_dict={"mse_loss": mse_loss, "total_loss": mse_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            loss=total_loss,
+            loss_dict=loss_dict,
+            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": pre_acts}
         )

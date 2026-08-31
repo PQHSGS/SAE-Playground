@@ -33,6 +33,7 @@ class TreeSAE(BaseSAE):
         self.coarse_enc = nn.Linear(d_in, d_sae // 4, bias=True)
         self.fine_enc = nn.Linear(d_in + (d_sae // 4), d_sae, bias=True)
 
+        self.w_dec_coarse = nn.Parameter(torch.empty(d_sae // 4, d_in))
         self.w_dec = nn.Parameter(torch.empty(d_sae, d_in))
         self.b_dec = nn.Parameter(torch.zeros(d_in))
 
@@ -41,6 +42,7 @@ class TreeSAE(BaseSAE):
     def _reset_parameters(self):
         nn.init.kaiming_uniform_(self.coarse_enc.weight, nonlinearity="relu")
         nn.init.kaiming_uniform_(self.fine_enc.weight, nonlinearity="relu")
+        nn.init.kaiming_uniform_(self.w_dec_coarse, nonlinearity="linear")
         nn.init.kaiming_uniform_(self.w_dec, nonlinearity="linear")
         self.normalize_decoder_weights()
 
@@ -73,14 +75,31 @@ class TreeSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
-        x_hat = self.decode(f)
+        x_centered = x - self.b_dec
 
-        mse_loss = nn.functional.mse_loss(x_hat, target)
+        # Stage 1: Coarse concepts
+        coarse_acts = torch.relu(self.coarse_enc(x_centered))
+        
+        # Stage 2: Fine features conditioned on coarse activations
+        joint_input = torch.cat([x_centered, coarse_acts], dim=-1)
+        fine_pre_acts = torch.relu(self.fine_enc(joint_input))
+
+        val, idx = torch.topk(fine_pre_acts, k=min(self.k, fine_pre_acts.shape[-1]), dim=-1)
+        f = torch.zeros_like(fine_pre_acts)
+        f.scatter_(dim=-1, index=idx, src=val)
+
+        x_hat = self.decode(f)
+        mse_fine = nn.functional.mse_loss(x_hat, target)
+
+        # Hierarchical coarse reconstruction auxiliary loss
+        coarse_hat = torch.matmul(coarse_acts, self.w_dec_coarse) + self.b_dec
+        mse_coarse = nn.functional.mse_loss(coarse_hat, target)
+        total_loss = mse_fine + 0.25 * mse_coarse
+
         return DictionaryOutput(
             reconstructed=x_hat,
             feature_acts=f,
-            loss=mse_loss,
-            loss_dict={"mse_loss": mse_loss, "total_loss": mse_loss},
-            extra_dict={"l0": float(self.k)}
+            loss=total_loss,
+            loss_dict={"mse_loss": mse_fine, "mse_coarse": mse_coarse, "total_loss": total_loss},
+            extra_dict={"l0": float(self.k), "pre_acts": fine_pre_acts}
         )

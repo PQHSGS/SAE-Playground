@@ -77,14 +77,33 @@ class SASA(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
-        x_hat = self.decode(f)
+        x_centered = x - self.b_dec
+        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
 
+        # Dynamic sparsity budget prediction
+        k_ratio = self.k_predictor(x_centered)
+        k_dynamic = self.min_k + (self.max_k - self.min_k) * k_ratio
+        
+        k_int = int(k_dynamic.mean().item())
+        val, idx = torch.topk(pre_acts, k=min(max(k_int, self.min_k), self.max_k), dim=-1)
+        f = torch.zeros_like(pre_acts)
+        f.scatter_(dim=-1, index=idx, src=val)
+
+        x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
+
+        # Budget loss: enforces mean dynamic k to converge to target_k
+        budget_loss = ((k_dynamic.mean() - self.target_k) / max(1.0, self.target_k)) ** 2
+        total_loss = mse_loss + 0.05 * budget_loss
+
         return DictionaryOutput(
             reconstructed=x_hat,
             feature_acts=f,
-            loss=mse_loss,
-            loss_dict={"mse_loss": mse_loss, "total_loss": mse_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            loss=total_loss,
+            loss_dict={"mse_loss": mse_loss, "budget_loss": budget_loss, "total_loss": total_loss},
+            extra_dict={
+                "l0": (f > 0).float().sum(dim=-1).mean().item(),
+                "mean_dynamic_k": k_dynamic.mean().item(),
+                "pre_acts": pre_acts,
+            }
         )

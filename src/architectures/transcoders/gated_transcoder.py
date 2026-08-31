@@ -62,12 +62,18 @@ class GatedTranscoder(BaseTranscoder):
         y_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(y_hat, target)
         l1_loss = self.l1_coeff * torch.sigmoid(gate_pre).sum(dim=-1).mean()
-        total_loss = mse_loss + l1_loss
+        
+        # Gating reconstruction auxiliary loss
+        gate_f = torch.relu(gate_pre)
+        gate_y_hat = torch.matmul(gate_f, self.w_dec.detach()) + self.b_dec
+        aux_loss = nn.functional.mse_loss(gate_y_hat, target)
+
+        total_loss = mse_loss + l1_loss + aux_loss
 
         return DictionaryOutput(
             reconstructed=y_hat,
             feature_acts=f,
             loss=total_loss,
-            loss_dict={"mse_loss": mse_loss, "l1_loss": l1_loss, "total_loss": total_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            loss_dict={"mse_loss": mse_loss, "l1_loss": l1_loss, "aux_loss": aux_loss, "total_loss": total_loss},
+            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": mag_pre}
         )
