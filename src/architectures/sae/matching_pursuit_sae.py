@@ -102,6 +102,7 @@ class MatchingPursuitSAE(BaseSAE):
         target = target if target is not None else x
         f = self.encode(x)
         x_hat = self.decode(f)
+        pre_acts = torch.relu(torch.matmul(x - self.b_dec, self.w_dec.T))
 
         mse_loss = nn.functional.mse_loss(x_hat, target)
         return DictionaryOutput(
@@ -109,5 +110,5 @@ class MatchingPursuitSAE(BaseSAE):
             feature_acts=f,
             loss=mse_loss,
             loss_dict={"mse_loss": mse_loss, "total_loss": mse_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": pre_acts}
         )

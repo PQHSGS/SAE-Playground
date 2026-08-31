@@ -50,12 +50,15 @@ class StandardSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
+        x_centered = x - self.b_dec
+        pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
+        f = torch.relu(pre_acts)
         x_hat = self.decode(f)
 
-        # Compute losses
+        # Compute losses according to Bricken et al. 2023 (scaled by decoder norms)
         mse_loss = nn.functional.mse_loss(x_hat, target)
-        l1_loss = self.l1_coeff * f.sum(dim=-1).mean()
+        dec_norms = torch.norm(self.w_dec, dim=-1)
+        l1_loss = self.l1_coeff * (f * dec_norms).sum(dim=-1).mean()
         total_loss = mse_loss + l1_loss
 
         return DictionaryOutput(
@@ -63,5 +66,5 @@ class StandardSAE(BaseSAE):
             feature_acts=f,
             loss=total_loss,
             loss_dict={"mse_loss": mse_loss, "l1_loss": l1_loss, "total_loss": total_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": pre_acts}
         )

@@ -100,11 +100,12 @@ class JumpReLUSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
+        x_centered = x - self.b_dec
+        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
+        f = JumpReLUFunction.apply(pre_acts, self.threshold, self.bandwidth)
         x_hat = self.decode(f)
 
         mse_loss = nn.functional.mse_loss(x_hat, target)
-        # Sparsity penalty on L0 surrogate or threshold penalty
         l0_proxy = (f > 0).float().sum(dim=-1).mean()
         sparsity_loss = self.l1_coeff * l0_proxy
         total_loss = mse_loss + sparsity_loss
@@ -114,5 +115,9 @@ class JumpReLUSAE(BaseSAE):
             feature_acts=f,
             loss=total_loss,
             loss_dict={"mse_loss": mse_loss, "sparsity_loss": sparsity_loss, "total_loss": total_loss},
-            extra_dict={"l0": l0_proxy.item(), "mean_threshold": self.threshold.mean().item()}
+            extra_dict={
+                "l0": l0_proxy.item(),
+                "mean_threshold": self.threshold.mean().item(),
+                "pre_acts": pre_acts,
+            }
         )

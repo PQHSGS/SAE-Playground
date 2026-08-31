@@ -91,5 +91,5 @@ class GatedSAE(BaseSAE):
             feature_acts=f,
             loss=total_loss,
             loss_dict={"mse_loss": mse_loss, "l1_loss": l1_loss, "aux_loss": aux_loss, "total_loss": total_loss},
-            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item()}
+            extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": mag_pre_acts}
         )

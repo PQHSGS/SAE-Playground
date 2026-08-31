@@ -109,5 +109,5 @@ class MatryoshkaSAE(BaseSAE):
             feature_acts=f_full,
             loss=total_loss,
             loss_dict=loss_dict,
-            extra_dict={"l0": float(self.k), "prefix_dims": self.prefix_dims}
+            extra_dict={"l0": float(self.k), "prefix_dims": self.prefix_dims, "pre_acts": pre_acts}
         )
