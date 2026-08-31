@@ -30,13 +30,15 @@ def compute_ghost_gradients_loss(
     topk_dead: int = 32
 ) -> torch.Tensor:
     """
-    Ghost Gradients (OpenAI / DeepMind):
+    Ghost Gradients (Anthropic / OpenAI):
     Passes reconstruction error gradients to inactive latents without altering forward outputs.
+    Uses softplus scaling on dead latents to ensure sub-threshold pre-activations receive continuous gradient.
     """
     if not dead_mask.any() or ghost_grad_coeff <= 0:
         return torch.tensor(0.0, device=residual.device)
 
-    dead_acts = pre_acts * dead_mask.float()
+    # Softplus ensures non-zero gradients even if pre_acts <= 0
+    dead_acts = torch.nn.functional.softplus(pre_acts) * dead_mask.float()
     k = min(topk_dead, int(dead_mask.sum().item()))
     if k == 0:
         return torch.tensor(0.0, device=residual.device)

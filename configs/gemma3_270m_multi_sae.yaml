@@ -28,7 +28,7 @@ min_learning_rate: 0.00001
 lr_warmup_steps: 1000
 total_steps: 15000
 checkpoint_steps: 2500
-dead_feature_threshold: 1000000
+dead_feature_threshold: 250000
 use_ghost_grads: true
 ghost_grad_coeff: 0.1
 output_dir: "checkpoints/gemma3_270m_multi_sae"

@@ -63,7 +63,8 @@ class TopKSAE(BaseSAE):
     ) -> DictionaryOutput:
         target = target if target is not None else x
         x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
+        raw_pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
+        pre_acts = torch.relu(raw_pre_acts)
 
         # TopK selection
         val, idx = torch.topk(pre_acts, k=min(self.k, pre_acts.shape[-1]), dim=-1)
@@ -76,11 +77,10 @@ class TopKSAE(BaseSAE):
         loss_dict = {"mse_loss": mse_loss}
         total_loss = mse_loss
 
-        # Auxiliary loss for dead latents (OpenAI TopK Aux Loss)
+        # Auxiliary loss for dead latents (OpenAI TopK Aux Loss with softplus gradient flow)
         if dead_mask is not None and dead_mask.any() and self.aux_loss_coeff > 0:
             residual = target - x_hat
-            # Compute topk on dead latents over residual
-            dead_pre_acts = pre_acts * dead_mask.float()
+            dead_pre_acts = torch.nn.functional.softplus(raw_pre_acts) * dead_mask.float()
             dead_k = min(self.k, int(dead_mask.sum().item()))
             if dead_k > 0:
                 dead_val, dead_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)
@@ -97,5 +97,5 @@ class TopKSAE(BaseSAE):
             feature_acts=f,
             loss=total_loss,
             loss_dict=loss_dict,
-            extra_dict={"l0": float(self.k), "pre_acts": pre_acts}
+            extra_dict={"l0": float(self.k), "pre_acts": raw_pre_acts}
         )
