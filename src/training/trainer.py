@@ -264,7 +264,3 @@ class DictionaryTrainer:
         logger.info("Training completed successfully!")
         if HAS_WANDB and wandb.run is not None:
             wandb.finish()
-
-
-# Backward-compatible alias
-MultiSAETrainer = DictionaryTrainer
