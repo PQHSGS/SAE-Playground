@@ -60,9 +60,14 @@ python scripts/train.py --config configs/gemma3_270m_all_layers.yaml
 python scripts/train.py --config configs/gemma3_270m_single_layer.yaml
 ```
 
-#### Train BatchTopK SAE on PlanckGPT:
+#### Train Full Architecture SAE on PlanckGPT (All 14 Depth Layers Simultaneously):
 ```bash
-python scripts/train.py --config configs/planckgpt_batch_topk.yaml
+python scripts/train.py --config configs/planckgpt_all_layers.yaml
+```
+
+#### Train Single-Layer SAE on PlanckGPT (Layer 7):
+```bash
+python scripts/train.py --config configs/planckgpt_single_layer.yaml
 ```
 
 #### Train TopK SAE on GPT-2:
@@ -135,7 +140,8 @@ python scripts/run_circuits.py --config configs/circuits.yaml
 ├── configs/                          # Clean self-contained YAML experiment configs
 │   ├── gemma3_270m_all_layers.yaml   # Gemma 3 270M (All 18 Depth Layers Simultaneously)
 │   ├── gemma3_270m_single_layer.yaml # Gemma 3 270M (Single Layer 9)
-│   ├── planckgpt_batch_topk.yaml     # PlanckGPT BatchTopK SAE
+│   ├── planckgpt_all_layers.yaml     # PlanckGPT (All 14 Depth Layers Simultaneously)
+│   ├── planckgpt_single_layer.yaml   # PlanckGPT (Single Layer 7)
 │   ├── gpt2_topk.yaml                # GPT-2 TopK SAE
 │   ├── skip_transcoder.yaml          # Skip-Transcoder
 │   ├── crosscoder.yaml               # Multi-Layer Crosscoder

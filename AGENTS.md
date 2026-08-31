@@ -80,7 +80,8 @@ All experiment configurations are **self-contained single YAML files** in [`conf
 configs/
 ├── gemma3_270m_all_layers.yaml    # Gemma 3 270M (All 18 Depth Layers Simultaneously)
 ├── gemma3_270m_single_layer.yaml  # Gemma 3 270M (Single Layer 9)
-├── planckgpt_batch_topk.yaml      # PlanckGPT BatchTopK SAE
+├── planckgpt_all_layers.yaml      # PlanckGPT (All 14 Depth Layers Simultaneously)
+├── planckgpt_single_layer.yaml    # PlanckGPT (Single Layer 7)
 ├── gpt2_topk.yaml                 # GPT-2 TopK SAE
 ├── skip_transcoder.yaml           # Skip-Transcoder
 ├── crosscoder.yaml                # Multi-Layer Crosscoder

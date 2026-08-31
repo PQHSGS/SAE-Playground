@@ -1,0 +1,43 @@
+# PlanckGPT Full Architecture SAE Training Config (All 14 Depth Layers Simultaneously)
+model_name_or_path: "cattonpm/PlanckGPT-v0.10.0"
+torch_dtype: "bfloat16"
+context_length: 512
+mask_bos: true
+
+# Train all 14 depth layers simultaneously from 1 LLM forward pass
+hook_points:
+  - "transformer.0"
+  - "transformer.1"
+  - "transformer.2"
+  - "transformer.3"
+  - "transformer.4"
+  - "transformer.5"
+  - "transformer.6"
+  - "transformer.7"
+  - "transformer.8"
+  - "transformer.9"
+  - "transformer.10"
+  - "transformer.11"
+  - "transformer.12"
+  - "transformer.13"
+
+architecture: "batch_topk"
+expansion_factor: 16       # d_sae = 896 * 16 = 14,336 features per layer
+k: 32                      # BatchTopK: selects total_k = (batch_size * k) active latents globally
+aux_loss_coeff: 0.03125    # OpenAI Aux Loss for dead latents
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1000
+total_steps: 20000
+checkpoint_steps: 2500
+dead_feature_threshold: 1000000
+use_ghost_grads: true
+ghost_grad_coeff: 0.1
+output_dir: "checkpoints/planckgpt_all_layers"
+wandb_project: "planckgpt-sae"
+seed: 42
