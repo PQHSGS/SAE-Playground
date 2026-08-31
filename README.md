@@ -65,6 +65,11 @@ python scripts/train.py --config configs/planckgpt_batch_topk.yaml
 python scripts/train.py --config configs/gpt2_topk.yaml
 ```
 
+#### Train Multi-Layer BatchTopK SAE on Gemma 3 270M (6 Layers Simultaneously):
+```bash
+python scripts/train.py --config configs/gemma3_270m_multi_sae.yaml
+```
+
 #### Train Skip-Transcoder:
 ```bash
 python scripts/train.py --config configs/skip_transcoder.yaml
@@ -81,7 +86,7 @@ python scripts/train.py --config configs/crosscoder.yaml
 
 Evaluate reconstruction error (MSE / NMSE), $L_0$, explained variance, dead feature percentage, and Cross-Entropy loss recovery automatically from your config:
 ```bash
-python scripts/evaluate.py --config configs/gemma3_270m_batch_topk.yaml
+python scripts/evaluate.py --config configs/gemma3_270m_multi_sae.yaml
 ```
 
 ---
@@ -90,7 +95,7 @@ python scripts/evaluate.py --config configs/gemma3_270m_batch_topk.yaml
 
 Launch the local web UI (feature search, token heatmaps, direct logit attribution, and feature steering):
 ```bash
-python scripts/launch_dashboard.py --config configs/gemma3_270m_batch_topk.yaml --port 8000
+python scripts/launch_dashboard.py --config configs/gemma3_270m_multi_sae.yaml --port 8000
 ```
 Open `http://localhost:8000` in your browser.
 
@@ -100,16 +105,25 @@ Open `http://localhost:8000` in your browser.
 
 Test steering features during text generation:
 ```bash
-python scripts/steer.py --config configs/gemma3_270m_batch_topk.yaml --feature_id 42 --alpha 15.0
+python scripts/steer.py --config configs/gemma3_270m_multi_sae.yaml --feature_id 42 --alpha 15.0
 ```
 
 ---
 
 ### 5. Local Auto-Interpretation
 
-Extract max-activating snippets and generate local explanations:
+Extract max-activating snippets and generate local explanations with 0 external API dependencies:
 ```bash
-python scripts/run_auto_interp.py --config configs/gemma3_270m_batch_topk.yaml --num_features 20
+python scripts/run_auto_interp.py --config configs/auto_interp.yaml --num_features 20
+```
+
+---
+
+### 6. Transcoder Circuit & Graph Discovery
+
+Extract mechanistic circuits and causal transcoder graphs:
+```bash
+python scripts/run_circuits.py --config configs/circuits.yaml
 ```
 
 ---
@@ -119,6 +133,7 @@ python scripts/run_auto_interp.py --config configs/gemma3_270m_batch_topk.yaml -
 ```
 .
 ├── configs/                          # Clean self-contained YAML experiment configs
+│   ├── gemma3_270m_multi_sae.yaml   # Gemma 3 270M Multi-Layer (6 Layers) BatchTopK SAE
 │   ├── gemma3_270m_batch_topk.yaml  # Gemma 3 270M BatchTopK SAE
 │   ├── gemma3_270m_topk.yaml        # Gemma 3 270M TopK SAE
 │   ├── planckgpt_batch_topk.yaml    # PlanckGPT BatchTopK SAE
@@ -127,18 +142,18 @@ python scripts/run_auto_interp.py --config configs/gemma3_270m_batch_topk.yaml -
 │   ├── skip_transcoder.yaml         # Skip-Transcoder
 │   ├── crosscoder.yaml              # Multi-Layer Crosscoder
 │   ├── auto_interp.yaml             # Local auto-interpretation settings
-│   └── circuits.yaml                # Edge Attribution Patching (EAP-SAE) settings
+│   └── circuits.yaml                # Edge Attribution Patching (EAP-SAE) & Transcoder Graphs
 ├── src/
 │   ├── core/                        # BaseDictionary, HookManager, ActivationBuffer, Configs
 │   ├── architectures/               # SAEs, Transcoders, Crosscoders & Factory Registry
 │   ├── training/                    # Trainer, Loss functions, ConstrainedAdamW, Schedulers
 │   ├── evaluation/                  # Metrics, CE Loss Recovery, Feature Stats
 │   ├── auto_interpret/              # Max-activating token collector, Local Explainer, Simulator
-│   ├── circuits/                    # Edge Attribution Patching (EAP-SAE), Feature Steering
+│   ├── circuits/                    # EAP-SAE, Transcoder Circuits, Feature Steering
 │   ├── dashboard/                   # FastAPI backend + Modern UI
 │   └── utils/                       # Universal HF loaders, Logit Lens (W_U), IO, Rich Logger
-├── scripts/                         # CLI scripts (train, evaluate, steer, dashboard, auto-interp)
-├── tests/                           # Automated pytest suite (20 tests)
+├── scripts/                         # CLI scripts (train, evaluate, steer, dashboard, auto-interp, circuits)
+├── tests/                           # Automated pytest suite (23 tests)
 ├── data/                            # Data caches, auto-interp results, circuit graphs
 └── checkpoints/                     # Saved model weights and metadata
 ```

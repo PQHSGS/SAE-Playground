@@ -93,40 +93,55 @@ configs/
 
 ## 5. Critical Engineering Principles & Coding Standards
 
-1. **VRAM Optimization (GPU)**:
+1. **Object-Oriented Invariants & DRY Encoding**:
+   - **Single Source of Truth**: `encode()` and `decode()` MUST be the sole locations defining feature activation and signal reconstruction.
+   - In `forward()`, always invoke `f, pre_acts = self.encode(x, return_pre_acts=True)` and `x_hat = self.decode(f)`. Never duplicate linear projections or Top-K/gating routines in `forward()`.
+   - **Standardized Method Ordering**: Every architecture class MUST maintain the uniform method order:
+     `__init__()` $\to$ `_reset_parameters()` $\to$ `get_decoder_weights()` $\to$ `encode()` $\to$ `decode()` $\to$ `forward()`.
+   - **Zero Unnecessary `getattr`/`hasattr` Spam**: Rely on typed interfaces and explicit abstract class properties.
+
+2. **Paper-Specific Dead Latent Paradigms (No One-Size-Fits-All)**:
+   - **OpenAI TopK / BatchTopK**: Native $\mathcal{L}_{\text{aux}} = \frac{1}{32} \|(x - \hat{x}) - W_{\text{dec}} f_{\text{dead}}\|_2^2$ with continuous **softplus gradient flow** on dead features ($\sigma(z) > 0$).
+   - **DeepMind JumpReLU**: Gaussian-kernel Straight-Through Estimator (STE) on learnable threshold $\theta$.
+   - **DeepMind Gated**: Auxiliary gating loss $\text{MSE}(x, \hat{x}_{\text{gate}})$ using `W_dec.detach()`.
+   - **Hierarchical TreeSAE**: Multi-scale coarse branch auxiliary reconstruction loss $\mathcal{L} = \text{MSE}_{\text{fine}} + 0.25 \text{MSE}_{\text{coarse}}$.
+   - **SASA**: Dataset-level budget penalty $\mathcal{L}_{\text{budget}} = \left(\frac{\bar{k}(x) - k_{\text{target}}}{k_{\text{target}}}\right)^2$.
+   - **Anthropic Ghost Gradients**: Universal trainer-level safety net operating on unclamped raw `pre_acts`.
+
+3. **VRAM Optimization & Gradient Hygiene (GPU)**:
    - Always run base model forward passes under `torch.amp.autocast('cuda', dtype=torch.bfloat16)` with `@torch.no_grad()`.
-   - Use in-place operations (`tensor.div_()`, `tensor.scatter_()`) for weight normalization.
-2. **Contiguous Memory Layout**:
+   - Immediate per-layer backward passes in multi-layer training to free autograd activation memory instantly.
+   - Use in-place operations (`tensor.div_()`, `tensor.scatter_()`) for unit-norm decoder weight projection.
+
+4. **Contiguous Memory Layout**:
    - Always ensure tensors are `.contiguous()` after boolean masking, slicing, or transposition before calling `.view()`, matrix multiplications, or `safetensors.save_file()`.
-3. **Host RAM Optimization**:
-   - Streaming buffers write directly into pre-allocated memory slices; never accumulate unbounded Python lists of tensors.
-4. **Data Faithfulness (Anti-Artifacts)**:
-   - **BOS Attention Sink Filtering**: Always mask token 0 (`mask[:, 0] = False`) in `ActivationBuffer` to avoid attention sink distortion.
-   - **Online Activation Normalization**: Running mean centering and norm scaling $s = \frac{\sqrt{d}}{\mathbb{E}[\|x - \mu\|_2]}$.
-5. **Zero External API Dependency**:
+
+5. **Scale-Invariant Normalized Tracking**:
+   - Track and log scale-invariant mean loss across layers (`loss/total = total_loss_accum / max(1, num_layers)`) and **Normalized MSE ($\text{NMSE} = \frac{\|x - \hat{x}\|_2^2}{\text{Var}(x)}$)**. Never report scale-dependent sum metrics.
+
+6. **Zero External API Dependency**:
    - All auto-interpretation runs locally using quantized instruct models (e.g. `google/gemma-3-4b-it` in 4-bit) without remote API keys.
-6. **Structured Logging & WandB**:
-   - Use `src.utils.logging.setup_logger` for clean, formatted console logging.
-   - Log all losses (`loss/total`, `loss/mse`, `loss/ghost_grads`) and health metrics (`metrics/l0`, `metrics/dead_pct`, `metrics/tokens_processed`) to WandB.
 
 ---
 
 ## 6. Verification & Test Suite
 
-Before committing code or submitting changes, always run the full test suite:
+Before committing code or submitting changes, always run the full static analysis and test suite:
 
 ```bash
+pyflakes src/ scripts/ tests/
 python -m pytest tests/ -v
 ```
 
-Current test suite contains **20 automated tests** covering:
+Current test suite contains **23 automated tests** covering:
 - Forward/backward passes and unit-norm constraints for all 11 architectures.
 - Transcoder and Crosscoder multi-layer flows.
 - SafeTensors save/load round-tripping.
 - Direct Logit Attribution (Logit Lens).
 - Explanation simulation scoring.
 - Edge Attribution Patching (EAP-SAE) autograd gradient flows.
-- End-to-end GPU training, checkpointing, and steering pipeline.
+- Transcoder causal replacement graphs.
+- End-to-end multi-layer GPU training, checkpointing, and steering pipeline.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
@@ -138,3 +153,4 @@ In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the re
 
 If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
 <!-- CODEGRAPH_END -->
+
