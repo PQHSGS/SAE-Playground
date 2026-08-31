@@ -74,3 +74,32 @@ def test_multi_layer_dictionary_forward_and_save():
         from src.architectures.sae.topk_sae import TopKSAE
         layer0_direct = TopKSAE.from_pretrained(os.path.join(tmpdir, "model_layers_0"))
         assert layer0_direct.d_in == d_in
+
+
+def test_multi_layer_transcoder_forward_and_step():
+    d_in = 64
+    d_sae = 256
+    batch_size = 8
+
+    # Create 2 layer transcoders (e.g. MLP 0 and MLP 1)
+    dict_map = {
+        "model.layers.0.mlp.in": build_dictionary("skip_transcoder", d_in=d_in, d_sae=d_sae, d_out=d_in),
+        "model.layers.1.mlp.in": build_dictionary("transcoder", d_in=d_in, d_sae=d_sae, d_out=d_in),
+    }
+    multi_transcoder = MultiLayerDictionary(dict_map)
+    assert len(multi_transcoder) == 2
+
+    # Paired inputs and targets for each layer
+    transcoder_batch = {
+        "model.layers.0.mlp.in": (torch.randn(batch_size, d_in), torch.randn(batch_size, d_in)),
+        "model.layers.1.mlp.in": (torch.randn(batch_size, d_in), torch.randn(batch_size, d_in)),
+    }
+
+    cfg = TrainingConfig(batch_size=batch_size, total_steps=5, output_dir="dummy_out")
+    trainer = DictionaryTrainer(multi_transcoder, activation_buffer=None, config=cfg, device="cpu")
+    metrics = trainer.train_step(transcoder_batch)
+
+    assert "loss/total" in metrics
+    assert "layers/model_layers_0_mlp_in/nmse" in metrics
+    assert "layers/model_layers_1_mlp_in/nmse" in metrics
+    assert metrics["loss/total"] > 0.0

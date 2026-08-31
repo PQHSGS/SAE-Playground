@@ -194,8 +194,16 @@ class ActivationBuffer:
         end = start + self.batch_size
         self.buffer_idx = end
 
-        # Multi-SAE dictionary mode
+        # Multi-dictionary mode (Multi-SAE and Multi-Transcoder)
         if self.return_dict:
+            if self.target_hook_points is not None:
+                return {
+                    hp: (
+                        self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous(),
+                        self.buffer[target_hp][start:end].to(self.device, non_blocking=True).contiguous(),
+                    )
+                    for hp, target_hp in zip(self.hook_points, self.target_hook_points)
+                }
             return {
                 hp: self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous()
                 for hp in self.hook_points
