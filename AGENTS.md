@@ -78,15 +78,14 @@ All experiment configurations are **self-contained single YAML files** in [`conf
 
 ```
 configs/
-├── gemma3_270m_batch_topk.yaml  # Gemma 3 270M BatchTopK SAE
-├── gemma3_270m_topk.yaml        # Gemma 3 270M TopK SAE
-├── planckgpt_batch_topk.yaml    # PlanckGPT BatchTopK SAE
-├── planckgpt_topk.yaml          # PlanckGPT TopK SAE
-├── gpt2_topk.yaml               # GPT-2 TopK SAE
-├── skip_transcoder.yaml         # Skip-Transcoder
-├── crosscoder.yaml              # Multi-Layer Crosscoder
-├── auto_interp.yaml             # 100% Local Auto-Interpretation
-└── circuits.yaml                # Edge Attribution Patching (EAP-SAE)
+├── gemma3_270m_all_layers.yaml    # Gemma 3 270M (All 18 Depth Layers Simultaneously)
+├── gemma3_270m_single_layer.yaml  # Gemma 3 270M (Single Layer 9)
+├── planckgpt_batch_topk.yaml      # PlanckGPT BatchTopK SAE
+├── gpt2_topk.yaml                 # GPT-2 TopK SAE
+├── skip_transcoder.yaml           # Skip-Transcoder
+├── crosscoder.yaml                # Multi-Layer Crosscoder
+├── auto_interp.yaml               # 100% Local Auto-Interpretation
+└── circuits.yaml                  # Edge Attribution Patching (EAP-SAE) & Transcoder Graphs
 ```
 
 ---
