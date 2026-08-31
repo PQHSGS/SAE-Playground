@@ -138,31 +138,22 @@ def main():
         seed=seed,
     )
 
-    if is_multi_sae:
-        from src.core.multi_dictionary import MultiLayerDictionary
+    # Build dictionary model collection (N >= 1)
+    from src.core.multi_dictionary import MultiLayerDictionary
 
-        logger.info(f"Setting up Multi-Layer SAE training across {len(hook_points)} layers: {hook_points}")
-        dict_map = {}
-        for hp in hook_points:
-            dict_map[hp] = build_dictionary(
-                architecture=arch_name,
-                d_in=d_in,
-                d_sae=d_sae,
-                **kwargs
-            )
+    if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
+        kwargs["n_layers"] = len(hook_points)
+        dict_model = MultiLayerDictionary({
+            "crosscoder": build_dictionary(architecture=arch_name, d_in=d_in, d_sae=d_sae, **kwargs)
+        })
+        return_dict = False
+    else:
+        dict_map = {
+            hp: build_dictionary(architecture=arch_name, d_in=d_in, d_sae=d_sae, **kwargs)
+            for hp in hook_points
+        }
         dict_model = MultiLayerDictionary(dict_map)
         return_dict = True
-    else:
-        if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
-            kwargs["n_layers"] = len(hook_points)
-
-        dict_model = build_dictionary(
-            architecture=arch_name,
-            d_in=d_in,
-            d_sae=d_sae,
-            **kwargs
-        )
-        return_dict = False
 
     full_buffer = ActivationBuffer(
         model=model,

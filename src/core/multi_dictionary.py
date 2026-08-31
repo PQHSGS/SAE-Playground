@@ -83,13 +83,33 @@ class MultiLayerDictionary(nn.Module):
         for sae in self.dictionaries.values():
             sae.normalize_decoder_weights(eps=eps)
 
+    def __len__(self) -> int:
+        return len(self.dictionaries)
+
+    def __getitem__(self, hook_point: str) -> BaseDictionary:
+        return self.get_dictionary(hook_point)
+
+    @property
+    def d_in(self) -> int:
+        return next(iter(self.dictionaries.values())).d_in
+
+    @property
+    def d_sae(self) -> int:
+        return next(iter(self.dictionaries.values())).d_sae
+
+    @property
+    def d_out(self) -> int:
+        return next(iter(self.dictionaries.values())).d_out
+
     def save_pretrained(self, save_dir: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Saves each layer dictionary into its own independent subdirectory:
         save_dir/
-          config.json (top-level ensemble manifest)
+          multi_sae_config.json (top-level ensemble manifest)
           layer_0/ (standard standalone BaseDictionary save folder)
           layer_1/ ...
+        
+        If len(dictionaries) == 1, also saves directly to save_dir for 100% single-SAE compatibility.
         """
         os.makedirs(save_dir, exist_ok=True)
         manifest = {
@@ -103,6 +123,11 @@ class MultiLayerDictionary(nn.Module):
         for sanitized_key, sae in self.dictionaries.items():
             layer_dir = os.path.join(save_dir, sanitized_key)
             sae.save_pretrained(layer_dir, metadata={"original_hook_point": self.hook_point_map[sanitized_key]})
+
+        # For single-layer special case (N=1), also save directly to root save_dir
+        if len(self.dictionaries) == 1:
+            single_sae = next(iter(self.dictionaries.values()))
+            single_sae.save_pretrained(save_dir, metadata=metadata)
 
     @classmethod
     def from_pretrained(cls, load_dir: str, device: str = "cpu", dtype: torch.dtype = torch.float32) -> "MultiLayerDictionary":
