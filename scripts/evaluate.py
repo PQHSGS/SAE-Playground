@@ -5,7 +5,6 @@ import json
 import yaml
 import torch
 from rich.console import Console
-from rich.table import Table
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -14,8 +13,7 @@ from src.core.multi_dictionary import MultiLayerDictionary
 from src.architectures.registry import get_dictionary_cls
 from src.utils.hf_helpers import load_model_and_tokenizer
 from src.core.activation_buffer import ActivationBuffer
-from src.evaluation.metrics import compute_reconstruction_metrics
-from src.evaluation.feature_stats import compute_feature_statistics
+from src.evaluation.benchmark_suite import SAEBenchmarkSuite
 
 
 def load_yaml(path: str) -> dict:
@@ -29,7 +27,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark and evaluate trained dictionaries via YAML config or checkpoint dir.")
     parser.add_argument("--config", type=str, default=None, help="Path to experiment YAML config file")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Direct directory containing checkpoints")
-    parser.add_argument("--num_eval_tokens", type=int, default=16384)
+    parser.add_argument("--num_eval_tokens", type=int, default=16384, help="Number of validation tokens to evaluate")
+    parser.add_argument("--full_benchmark", action="store_true", default=False, help="Run complete multi-dimensional SAEBench suite (splitting, absorption, Gini, downstream faithfulness)")
     return parser.parse_args()
 
 
@@ -88,29 +87,34 @@ def main():
     )
 
     batch_dict = buffer.next_batch()
+    bench_suite = SAEBenchmarkSuite(console=console)
 
-    table = Table(title="Evaluation & Benchmark Summary across Layer Dictionaries")
-    table.add_column("Layer / Hook Point", style="cyan", no_wrap=True)
-    table.add_column("NMSE", justify="right", style="magenta")
-    table.add_column("L0 (Active)", justify="right", style="green")
-    table.add_column("Explained Var", justify="right", style="yellow")
-    table.add_column("Dead Latents (%)", justify="right", style="red")
+    test_samples = [
+        "The quick brown fox jumps over the lazy dog.",
+        "Quantum mechanics reveals that particles exist in probabilistic wavefunctions.",
+        "In artificial intelligence, transformer self-attention enables global contextual routing.",
+        "def quicksort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [x for x in arr if x == pivot] + quicksort([x for x in arr if x > pivot])",
+    ]
 
     for hp in hook_points:
         sae = multi_dict.get_dictionary(hp)
         acts = batch_dict[hp]
-        recon_metrics = compute_reconstruction_metrics(sae, acts)
-        feat_stats = compute_feature_statistics(sae, acts)
+        if isinstance(acts, (tuple, list)):
+            x_in, targets = acts[0], acts[1]
+        else:
+            x_in, targets = acts, acts
 
-        table.add_row(
-            hp,
-            f"{recon_metrics['nmse']:.4f}",
-            f"{recon_metrics['l0']:.1f}",
-            f"{recon_metrics['explained_variance'] * 100:.1f}%",
-            f"{feat_stats['dead_features_pct']:.1f}%",
+        results = bench_suite.evaluate(
+            dictionary_model=sae,
+            activations=x_in,
+            targets=targets,
+            model=model if args.full_benchmark else None,
+            tokenizer=tokenizer if args.full_benchmark else None,
+            hook_point=hp if args.full_benchmark else None,
+            test_texts=test_samples if args.full_benchmark else None,
         )
 
-    console.print(table)
+        bench_suite.print_report(results, title=f"SAE Benchmark Report: Layer '{hp}'")
 
 
 if __name__ == "__main__":
