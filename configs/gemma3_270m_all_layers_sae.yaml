@@ -1,11 +1,11 @@
-# Gemma 3 270M Multi-Layer Simultaneous SAE Training Config
+# Gemma 3 270M Full Architecture SAE Training Config (All 18 Depth Layers Simultaneously)
 model_name_or_path: "google/gemma-3-270m"
 torch_dtype: "bfloat16"
 load_in_4bit: false
 context_length: 512
 mask_bos: true
 
-# Train all 18 depth layers simultaneously from 1 LLM forward pass
+# Train all 18 layers from a single forward pass through Gemma 3 270M
 hook_points:
   - "model.layers.0"
   - "model.layers.1"
@@ -38,11 +38,11 @@ batch_size: 4096
 learning_rate: 0.0003
 min_learning_rate: 0.00001
 lr_warmup_steps: 1000
-total_steps: 15000
+total_steps: 20000
 checkpoint_steps: 2500
 dead_feature_threshold: 1000000
 use_ghost_grads: true
 ghost_grad_coeff: 0.1
-output_dir: "checkpoints/gemma3_270m_multi_sae"
+output_dir: "checkpoints/gemma3_270m_all_layers_sae"
 wandb_project: "gemma3-270m-sae"
 seed: 42
