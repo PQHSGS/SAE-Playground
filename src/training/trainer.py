@@ -193,9 +193,12 @@ class DictionaryTrainer:
         num_layers = len(self.model)
         l0_vals = [v for k, v in metrics.items() if k.endswith("/l0")]
         dead_vals = [v for k, v in metrics.items() if k.endswith("/dead_pct")]
+        nmse_vals = [v for k, v in metrics.items() if k.endswith("/nmse")]
 
+        mean_nmse = sum(nmse_vals) / max(1, len(nmse_vals)) if nmse_vals else 0.0
         metrics["loss/total"] = total_loss_accum / max(1, num_layers)
         metrics["loss/mean"] = total_loss_accum / max(1, num_layers)
+        metrics["metrics/mean_nmse"] = mean_nmse
         metrics["metrics/mean_l0"] = sum(l0_vals) / max(1, len(l0_vals)) if l0_vals else 0.0
         metrics["metrics/max_dead_pct"] = max(dead_vals) if dead_vals else 0.0
         metrics["metrics/tokens_processed"] = self.total_tokens_trained
@@ -212,20 +215,20 @@ class DictionaryTrainer:
         logger.info(f"Target steps: {self.config.total_steps} | Batch size: {self.config.batch_size}")
 
         step = 0
-        running_loss = 0.0
+        running_nmse = 0.0
 
         with Progress(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("Loss: {task.fields[loss]:.4f} | L0: {task.fields[l0]:.1f} | Dead: {task.fields[dead]:.1f}%"),
+            TextColumn("NMSE: {task.fields[nmse]:.4f} | L0: {task.fields[l0]:.1f} | Dead: {task.fields[dead]:.1f}%"),
             TimeRemainingColumn(),
             console=self.console,
         ) as progress:
             task = progress.add_task(
                 f"Training {arch_name}...",
                 total=self.config.total_steps,
-                loss=0.0,
+                nmse=0.0,
                 l0=0.0,
                 dead=0.0,
             )
@@ -234,7 +237,8 @@ class DictionaryTrainer:
                 step += 1
                 metrics = self.train_step(batch)
 
-                running_loss = 0.9 * running_loss + 0.1 * metrics["loss/total"] if step > 1 else metrics["loss/total"]
+                cur_nmse = metrics.get("metrics/mean_nmse", 0.0)
+                running_nmse = 0.9 * running_nmse + 0.1 * cur_nmse if step > 1 else cur_nmse
 
                 if HAS_WANDB and wandb.run is not None:
                     wandb.log(metrics, step=step)
@@ -242,7 +246,7 @@ class DictionaryTrainer:
                 progress.update(
                     task,
                     advance=1,
-                    loss=running_loss,
+                    nmse=running_nmse,
                     l0=metrics.get("metrics/mean_l0", 0.0),
                     dead=metrics.get("metrics/max_dead_pct", 0.0),
                 )
