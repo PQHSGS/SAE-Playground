@@ -138,7 +138,6 @@ def analyze_text(req: TextAnalysisRequest):
     hook_mgr.remove_hooks()
 
     tokens = [state.tokenizer.decode([tid]) for tid in inputs["input_ids"][0]]
-    len(tokens)
 
     # Top features firing in this text
     mean_acts = f.mean(dim=0)

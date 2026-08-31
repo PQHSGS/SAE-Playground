@@ -53,9 +53,10 @@ def main():
 
     dataset_path = cfg.get("dataset_path", "HuggingFaceFW/fineweb-edu")
     dataset_name = cfg.get("dataset_name", "sample-10BT")
-    cfg.get("dataset_split", "train")
-    cfg.get("context_length", 1024)
-    cfg.get("mask_bos", True)
+    dataset_split = cfg.get("dataset_split", "train")
+    context_length = cfg.get("context_length", 1024)
+    mask_bos = cfg.get("mask_bos", True)
+    normalize_activations = cfg.get("normalize_activations", True)
 
     batch_size = cfg.get("batch_size", 4096)
     lr = cfg.get("learning_rate", 3e-4)
@@ -89,6 +90,10 @@ def main():
         target_hook_points=target_hook_points,
         dataset_path=dataset_path,
         dataset_name=dataset_name,
+        dataset_split=dataset_split,
+        context_length=context_length,
+        mask_bos=mask_bos,
+        normalize_activations=normalize_activations,
         batch_size=min(batch_size, 512),
         buffer_size=1024,
         device=device,
@@ -112,13 +117,12 @@ def main():
         **{k_: v_ for k_, v_ in cfg.items() if k_ not in [
             "architecture", "expansion_factor", "model_name_or_path", "hook_points",
             "target_hook_points", "torch_dtype", "load_in_4bit", "load_in_8bit",
-            "dataset_path", "dataset_name", "dataset_split", "batch_size", "learning_rate",
-            "min_learning_rate", "lr_warmup_steps", "total_steps", "checkpoint_steps",
-            "output_dir", "wandb_project", "seed"
+            "dataset_path", "dataset_name", "dataset_split", "context_length", "mask_bos",
+            "normalize_activations", "batch_size", "learning_rate", "min_learning_rate",
+            "lr_warmup_steps", "total_steps", "checkpoint_steps", "output_dir",
+            "wandb_project", "seed"
         ]}
     }
-    # Check if multi-SAE mode (multiple hook points for standard SAE architectures)
-    len(hook_points) > 1 and arch_name not in ["crosscoder", "batch_topk_crosscoder"]
 
     # Training configuration
     training_cfg = TrainingConfig(
@@ -162,6 +166,10 @@ def main():
         target_hook_points=target_hook_points,
         dataset_path=dataset_path,
         dataset_name=dataset_name,
+        dataset_split=dataset_split,
+        context_length=context_length,
+        mask_bos=mask_bos,
+        normalize_activations=normalize_activations,
         batch_size=batch_size,
         buffer_size=min(65536, batch_size * 16),
         device=device,

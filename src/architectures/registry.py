@@ -15,14 +15,16 @@ def register_dictionary(name: str) -> Callable[[Type[BaseDictionary]], Type[Base
     return decorator
 
 
+import importlib
+
+
 def _ensure_registered() -> None:
     """Ensure all subpackages are imported and registered."""
-    try:
-        import src.architectures.sae  # noqa: F401
-        import src.architectures.transcoders  # noqa: F401
-        import src.architectures.crosscoders  # noqa: F401
-    except ImportError:
-        pass
+    for mod in ["src.architectures.sae", "src.architectures.transcoders", "src.architectures.crosscoders"]:
+        try:
+            importlib.import_module(mod)
+        except ImportError:
+            pass
 
 
 def get_dictionary_cls(name: str) -> Type[BaseDictionary]:
