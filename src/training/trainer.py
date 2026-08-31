@@ -189,12 +189,13 @@ class DictionaryTrainer:
         # Enforce unit-norm decoder weights constraint
         self.model.normalize_decoder_weights()
 
-        # Compute aggregate metrics
+        # Compute aggregate metrics (scale-invariant across layer counts)
         num_layers = len(self.model)
         l0_vals = [v for k, v in metrics.items() if k.endswith("/l0")]
         dead_vals = [v for k, v in metrics.items() if k.endswith("/dead_pct")]
 
-        metrics["loss/total"] = total_loss_accum
+        metrics["loss/total"] = total_loss_accum / max(1, num_layers)
+        metrics["loss/mean"] = total_loss_accum / max(1, num_layers)
         metrics["metrics/mean_l0"] = sum(l0_vals) / max(1, len(l0_vals)) if l0_vals else 0.0
         metrics["metrics/max_dead_pct"] = max(dead_vals) if dead_vals else 0.0
         metrics["metrics/tokens_processed"] = self.total_tokens_trained
