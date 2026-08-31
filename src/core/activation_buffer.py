@@ -130,11 +130,14 @@ class ActivationBuffer:
             input_ids = encoding["input_ids"].to(self.device, non_blocking=True)
             attention_mask = encoding["attention_mask"].to(self.device, non_blocking=True)
 
+            # Bypass final lm_head vocabulary projection to save massive VRAM (e.g. 262k logits)
+            base_model = getattr(self.model, "model", getattr(self.model, "transformer", self.model))
+
             if torch.cuda.is_available():
                 with torch.amp.autocast("cuda", dtype=amp_dtype):
-                    _ = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                    _ = base_model(input_ids=input_ids, attention_mask=attention_mask)
             else:
-                _ = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                _ = base_model(input_ids=input_ids, attention_mask=attention_mask)
 
             # Mask out padding tokens and token-0 (BOS attention sink)
             mask = attention_mask.bool()
