@@ -1,0 +1,28 @@
+# GPT-2 TopK SAE Training Config
+model_name_or_path: "gpt2"
+torch_dtype: "bfloat16"
+context_length: 1024
+mask_bos: true
+
+hook_points:
+  - "transformer.h.6"
+
+architecture: "topk"
+expansion_factor: 16
+k: 32
+aux_loss_coeff: 0.03125
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1000
+total_steps: 10000
+checkpoint_steps: 2500
+use_ghost_grads: true
+ghost_grad_coeff: 0.1
+output_dir: "checkpoints/gpt2_topk_l6"
+wandb_project: "interpret-sae-playground"
+seed: 42

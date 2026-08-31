@@ -1,0 +1,25 @@
+# Skip-Transcoder (Residual-Preserving) Training Config
+model_name_or_path: "gpt2"
+torch_dtype: "bfloat16"
+context_length: 1024
+mask_bos: true
+
+hook_points:
+  - "transformer.h.6"
+target_hook_points:
+  - "transformer.h.7"
+
+architecture: "skip_transcoder"
+expansion_factor: 16
+k: 32
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+total_steps: 10000
+checkpoint_steps: 2500
+output_dir: "checkpoints/gpt2_skip_transcoder_l6_l7"
+wandb_project: "interpret-sae-playground"
+seed: 42

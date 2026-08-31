@@ -1,0 +1,14 @@
+# 100% Local Auto-Interpretation Config (Quantized Gemma 3)
+llm_model_name: "google/gemma-3-4b-it"
+load_in_4bit: true
+load_in_8bit: false
+torch_dtype: "bfloat16"
+
+max_activating_samples: 20
+quantile_samples: 10
+context_tokens_window: 64
+
+scoring_samples: 20
+simulation_batch_size: 8
+min_faithfulness_threshold: 0.3
+output_dir: "data/auto_interp"

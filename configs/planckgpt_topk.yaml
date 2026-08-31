@@ -1,0 +1,29 @@
+# PlanckGPT TopK SAE Training Config
+model_name_or_path: "cattonpm/PlanckGPT-v0.10.0"
+torch_dtype: "bfloat16"
+context_length: 512
+mask_bos: true
+
+# Hook Point (Residual: "transformer.7", MLP: "transformer.7.ffn2", Attention: "transformer.7.attn.out_proj")
+hook_points:
+  - "transformer.7"
+
+architecture: "topk"
+expansion_factor: 16       # d_sae = 896 * 16 = 14,336 features
+k: 32
+aux_loss_coeff: 0.03125
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1000
+total_steps: 15000
+checkpoint_steps: 2500
+use_ghost_grads: true
+ghost_grad_coeff: 0.1
+output_dir: "checkpoints/planckgpt_topk_l7"
+wandb_project: "planckgpt-sae"
+seed: 42

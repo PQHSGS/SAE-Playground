@@ -1,0 +1,28 @@
+# Gemma 3 270M BatchTopK SAE Training Config
+model_name_or_path: "google/gemma-3-270m"
+torch_dtype: "bfloat16"
+load_in_4bit: false
+context_length: 512
+mask_bos: true
+
+# Middle residual stream (layer 9 of 18)
+# Alternate hook points: "model.layers.9.mlp" or "model.layers.9.self_attn.o_proj"
+hook_points:
+  - "model.layers.9"
+
+architecture: "batch_topk"
+expansion_factor: 16       # d_sae = 640 * 16 = 10,240 features
+k: 32                      # BatchTopK: selects total_k = (batch_size * k) active latents globally
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1000
+total_steps: 15000
+checkpoint_steps: 2500
+output_dir: "checkpoints/gemma3_270m_batch_topk_l9"
+wandb_project: "gemma3-270m-sae"
+seed: 42

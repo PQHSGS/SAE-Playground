@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neuronpedia Interpretability Playground</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-section">
+        <span class="logo-icon">⚡</span>
+        <h1>Neuronpedia <span class="badge">Playground</span></h1>
+      </div>
+      <div class="status-section">
+        <span id="status-dot" class="dot dot-online"></span>
+        <span id="status-text">Backend Connected</span>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Sidebar: Feature List & Search -->
+      <aside class="sidebar">
+        <div class="search-box">
+          <input type="text" id="feature-search" placeholder="Search features or keywords...">
+        </div>
+        <div class="feature-list-header">
+          <span>Feature Index</span>
+          <span class="count-badge" id="total-count">0 Features</span>
+        </div>
+        <div class="feature-list" id="feature-list">
+          <div class="loading">Loading features...</div>
+        </div>
+      </aside>
+
+      <!-- Main Content Area -->
+      <main class="content">
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="tab-inspect">Feature Inspector & Logits</button>
+          <button class="tab-btn" data-tab="tab-analyze">Live Prompt Analyzer</button>
+          <button class="tab-btn" data-tab="tab-steer">Causal Steering Sandbox</button>
+        </div>
+
+        <!-- Tab 1: Feature Inspector -->
+        <section id="tab-inspect" class="tab-pane active">
+          <div class="card">
+            <h2 id="inspect-title">Select a feature to inspect</h2>
+            <p id="inspect-explanation" class="explanation-text">Explanations and direct logit attributions will appear here.</p>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <h3>Direct Logit Attribution (Promoted Tokens)</h3>
+              <div id="promoted-list" class="token-logit-list">
+                <div class="empty-msg">No feature selected</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>Direct Logit Attribution (Suppressed Tokens)</h3>
+              <div id="suppressed-list" class="token-logit-list">
+                <div class="empty-msg">No feature selected</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 2: Live Prompt Analyzer -->
+        <section id="tab-analyze" class="tab-pane">
+          <div class="card">
+            <h3>Analyze Custom Prompt Feature Activations</h3>
+            <textarea id="analyze-input" rows="3" placeholder="Enter text to analyze feature activations across tokens...">The theory of general relativity describes how spacetime bends around massive gravitational bodies.</textarea>
+            <button id="btn-analyze" class="primary-btn">Analyze Activations</button>
+          </div>
+
+          <div id="analyze-results" class="card hidden">
+            <h3>Top Firing Features & Token Heatmaps</h3>
+            <div id="heatmaps-container"></div>
+          </div>
+        </section>
+
+        <!-- Tab 3: Causal Steering Sandbox -->
+        <section id="tab-steer" class="tab-pane">
+          <div class="card">
+            <h3>Causal Feature Steering & Interventions</h3>
+            <p class="subtext">Clamp or boost specific feature directions in the residual stream during autoregressive generation.</p>
+            
+            <div class="form-group">
+              <label>Prompt:</label>
+              <textarea id="steer-prompt" rows="2">The scientist walked into the laboratory and</textarea>
+            </div>
+
+            <div class="steer-controls">
+              <div class="form-group">
+                <label>Feature ID:</label>
+                <input type="number" id="steer-feat-id" value="0" min="0">
+              </div>
+              <div class="form-group">
+                <label>Steering Coefficient (&alpha;): <span id="alpha-val">+5.0</span></label>
+                <input type="range" id="steer-alpha" min="-20" max="20" step="0.5" value="5">
+              </div>
+            </div>
+
+            <button id="btn-steer" class="primary-btn">Generate with Steering</button>
+
+            <div id="steer-output" class="steer-output-box hidden">
+              <h4>Generated Text:</h4>
+              <p id="steered-text"></p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

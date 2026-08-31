@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interpret-playground"
+version = "0.1.0"
+description = "A unified playground for Sparse Autoencoders, Transcoders, Crosscoders, Auto-Interpretation, and Circuit Discovery"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2.0",
+    "transformers>=4.40.0",
+    "datasets>=2.18.0",
+    "accelerate>=0.28.0",
+    "einops>=0.7.0",
+    "jaxtyping>=0.2.28",
+    "safetensors>=0.4.2",
+    "pydantic>=2.6.0",
+    "pyyaml>=6.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.0",
+    "pytest>=8.0.0"
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0"
+]
+tracking = [
+    "wandb>=0.16.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["Code", "data", "checkpoints", ".*"]
+pythonpath = ["."]
+

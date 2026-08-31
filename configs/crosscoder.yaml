@@ -1,0 +1,26 @@
+# Multi-Layer Crosscoder Training Config
+model_name_or_path: "gpt2"
+torch_dtype: "bfloat16"
+context_length: 1024
+mask_bos: true
+
+hook_points:
+  - "transformer.h.4"
+  - "transformer.h.6"
+  - "transformer.h.8"
+  - "transformer.h.10"
+
+architecture: "batch_topk_crosscoder"
+expansion_factor: 16
+k: 64
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+total_steps: 10000
+checkpoint_steps: 2500
+output_dir: "checkpoints/gpt2_crosscoder"
+wandb_project: "interpret-sae-playground"
+seed: 42

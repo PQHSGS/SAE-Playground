@@ -1,0 +1,4 @@
+# Edge Attribution Patching (EAP-SAE) & Circuit Tracing Config
+attribution_threshold: 0.05
+top_k_edges: 50
+output_dir: "data/circuits"
