@@ -38,6 +38,6 @@ include = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["Code", "data", "checkpoints", ".*"]
+norecursedirs = ["data", "checkpoints", "wandb", ".*"]
 pythonpath = ["."]
 
