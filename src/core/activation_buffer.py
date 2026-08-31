@@ -85,7 +85,7 @@ class ActivationBuffer:
                     streaming=True,
                 )
             self.data_iter = iter(self.dataset)
-        except Exception as e:
+        except Exception:
             self.data_iter = None
 
     def _get_text_batch(self) -> List[str]:

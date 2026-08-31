@@ -1,9 +1,8 @@
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 
@@ -196,8 +195,8 @@ class DictionaryTrainer:
         nmse_vals = [v for k, v in metrics.items() if k.endswith("/nmse")]
 
         mean_nmse = sum(nmse_vals) / max(1, len(nmse_vals)) if nmse_vals else 0.0
-        metrics["loss/total"] = total_loss_accum / max(1, num_layers)
-        metrics["loss/mean"] = total_loss_accum / max(1, num_layers)
+        scale_invariant_loss = total_loss_accum / max(1, num_layers)
+        metrics["loss/total"] = scale_invariant_loss
         metrics["metrics/mean_nmse"] = mean_nmse
         metrics["metrics/mean_l0"] = sum(l0_vals) / max(1, len(l0_vals)) if l0_vals else 0.0
         metrics["metrics/max_dead_pct"] = max(dead_vals) if dead_vals else 0.0

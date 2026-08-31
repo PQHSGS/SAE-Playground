@@ -2,7 +2,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -42,7 +42,6 @@ class BaseDictionary(nn.Module, ABC):
         Returns:
             f: Sparse feature activations of shape (..., d_sae)
         """
-        pass
 
     @abstractmethod
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -53,7 +52,6 @@ class BaseDictionary(nn.Module, ABC):
         Returns:
             x_hat: Reconstructed tensor of shape (..., d_out)
         """
-        pass
 
     @abstractmethod
     def forward(
@@ -66,14 +64,12 @@ class BaseDictionary(nn.Module, ABC):
         """
         Execute forward pass and compute relevant losses.
         """
-        pass
 
     @abstractmethod
     def get_decoder_weights(self) -> torch.Tensor:
         """
         Return the primary decoder weight matrix W_dec of shape (d_sae, d_out).
         """
-        pass
 
     @torch.no_grad()
     def normalize_decoder_weights(self, eps: float = 1e-8) -> None:

@@ -1,6 +1,5 @@
-from typing import List, Tuple
+from typing import List
 import math
-from src.auto_interpret.sample_collector import ActivatingSnippet
 
 
 class FeatureSimulator:

@@ -10,12 +10,11 @@ from rich.table import Table
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.core.base_dictionary import BaseDictionary
 from src.core.multi_dictionary import MultiLayerDictionary
 from src.architectures.registry import get_dictionary_cls
 from src.utils.hf_helpers import load_model_and_tokenizer
 from src.core.activation_buffer import ActivationBuffer
-from src.evaluation.metrics import compute_reconstruction_metrics, compute_ce_loss_recovery
+from src.evaluation.metrics import compute_reconstruction_metrics
 from src.evaluation.feature_stats import compute_feature_statistics
 
 

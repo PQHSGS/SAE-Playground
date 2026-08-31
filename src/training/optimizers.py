@@ -1,5 +1,4 @@
-from typing import Iterator, Optional, Tuple
-import torch
+from typing import Optional, Tuple
 from torch.optim import AdamW
 from src.core.base_dictionary import BaseDictionary
 

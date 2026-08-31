@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from src.auto_interpret.prompts import EXPLANATION_SYSTEM_PROMPT, EXPLANATION_USER_PROMPT

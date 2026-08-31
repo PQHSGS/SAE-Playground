@@ -1,7 +1,6 @@
 import os
 import tempfile
 import torch
-import pytest
 
 from src.architectures.registry import build_dictionary
 from src.core.multi_dictionary import MultiLayerDictionary

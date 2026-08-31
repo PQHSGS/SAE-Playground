@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Optional
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseTranscoder, DictionaryOutput

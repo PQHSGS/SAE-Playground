@@ -1,7 +1,6 @@
 import json
 import os
-from typing import Any, Dict, Optional
-import torch
+from typing import Any
 
 
 def save_json(data: Any, path: str) -> None:

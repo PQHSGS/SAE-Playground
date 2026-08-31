@@ -1,13 +1,12 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.core.base_dictionary import BaseDictionary
-from src.utils.hf_helpers import load_model_and_tokenizer, get_unembedding_weights, compute_direct_logit_attribution
+from src.utils.hf_helpers import compute_direct_logit_attribution
 from src.circuits.steering import FeatureSteeringEngine
 from src.core.hook_manager import HookManager
 
@@ -139,7 +138,7 @@ def analyze_text(req: TextAnalysisRequest):
     hook_mgr.remove_hooks()
 
     tokens = [state.tokenizer.decode([tid]) for tid in inputs["input_ids"][0]]
-    seq_len = len(tokens)
+    len(tokens)
 
     # Top features firing in this text
     mean_acts = f.mean(dim=0)

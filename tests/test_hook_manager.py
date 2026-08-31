@@ -1,4 +1,3 @@
-import pytest
 import torch
 import torch.nn as nn
 from src.core.hook_manager import HookManager

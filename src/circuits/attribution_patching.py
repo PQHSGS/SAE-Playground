@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 import torch
-import torch.nn as nn
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from src.core.base_dictionary import BaseDictionary
 from src.core.hook_manager import HookManager

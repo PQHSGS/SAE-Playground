@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Tuple, List, Dict
+from typing import Tuple, List, Dict
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase

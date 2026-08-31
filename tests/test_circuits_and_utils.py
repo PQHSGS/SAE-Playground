@@ -1,8 +1,5 @@
-import pytest
 import torch
-import torch.nn as nn
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.auto_interpret.sample_collector import FeatureSampleCollector
 from src.auto_interpret.simulator import FeatureSimulator
 from src.architectures.sae.topk_sae import TopKSAE
 from src.circuits.attribution_patching import EdgeAttributionPatching

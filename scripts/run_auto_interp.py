@@ -13,13 +13,9 @@ from src.architectures.registry import get_dictionary_cls
 from src.core.activation_buffer import ActivationBuffer
 from src.auto_interpret.sample_collector import FeatureSampleCollector
 from src.auto_interpret.explainer import FeatureExplainer
-from src.auto_interpret.simulator import FeatureSimulator
 from src.utils.io import save_json
 
 load_dotenv()
-
-
-import yaml
 
 
 def load_yaml(path: str) -> dict:

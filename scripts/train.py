@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.core.config import DictionaryConfig, HookConfig, TrainingConfig
+from src.core.config import TrainingConfig
 from src.core.activation_buffer import ActivationBuffer
 from src.architectures.registry import build_dictionary
 from src.training.trainer import DictionaryTrainer
@@ -53,9 +53,9 @@ def main():
 
     dataset_path = cfg.get("dataset_path", "HuggingFaceFW/fineweb-edu")
     dataset_name = cfg.get("dataset_name", "sample-10BT")
-    dataset_split = cfg.get("dataset_split", "train")
-    context_length = cfg.get("context_length", 1024)
-    mask_bos = cfg.get("mask_bos", True)
+    cfg.get("dataset_split", "train")
+    cfg.get("context_length", 1024)
+    cfg.get("mask_bos", True)
 
     batch_size = cfg.get("batch_size", 4096)
     lr = cfg.get("learning_rate", 3e-4)
@@ -118,7 +118,7 @@ def main():
         ]}
     }
     # Check if multi-SAE mode (multiple hook points for standard SAE architectures)
-    is_multi_sae = len(hook_points) > 1 and arch_name not in ["crosscoder", "batch_topk_crosscoder"]
+    len(hook_points) > 1 and arch_name not in ["crosscoder", "batch_topk_crosscoder"]
 
     # Training configuration
     training_cfg = TrainingConfig(

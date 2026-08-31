@@ -13,9 +13,6 @@ from src.architectures.registry import get_dictionary_cls
 from src.utils.hf_helpers import load_model_and_tokenizer, get_unembedding_weights
 
 
-import yaml
-
-
 def load_yaml(path: str) -> dict:
     if not path or not os.path.exists(path):
         return {}

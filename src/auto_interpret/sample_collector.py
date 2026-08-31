@@ -3,7 +3,6 @@ from typing import Dict, List, Optional
 import torch
 from transformers import PreTrainedTokenizerBase
 from src.core.base_dictionary import BaseDictionary
-from src.core.hook_manager import HookManager
 
 
 @dataclass

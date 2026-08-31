@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict
 import torch
 from src.core.base_dictionary import BaseDictionary
 

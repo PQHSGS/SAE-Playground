@@ -1,8 +1,7 @@
-import os
 import tempfile
 import pytest
 import torch
-from src.architectures.registry import build_dictionary, DICTIONARY_REGISTRY
+from src.architectures.registry import build_dictionary
 
 
 @pytest.mark.parametrize("arch", [
