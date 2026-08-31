@@ -20,7 +20,9 @@ def compute_reconstruction_metrics(
     - L1 (average L1 activation norm)
     - Explained Variance = 1 - Var(x - x_hat) / Var(x)
     """
-    targets = targets if targets is not None else activations
+    device = next(dictionary_model.parameters()).device
+    activations = activations.to(device)
+    targets = targets.to(device) if targets is not None else activations
     out = dictionary_model(activations, target=targets)
     x_hat = out.reconstructed
     f = out.feature_acts

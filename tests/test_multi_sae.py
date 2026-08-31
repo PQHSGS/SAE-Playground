@@ -6,7 +6,7 @@ import pytest
 from src.architectures.registry import build_dictionary
 from src.core.multi_dictionary import MultiLayerDictionary
 from src.core.config import TrainingConfig
-from src.training.multi_trainer import MultiSAETrainer
+from src.training.trainer import DictionaryTrainer
 
 
 def test_multi_layer_dictionary_forward_and_save():
@@ -42,6 +42,20 @@ def test_multi_layer_dictionary_forward_and_save():
     encoded = multi_dict.encode(acts_dict)
     decoded = multi_dict.decode(encoded)
     assert decoded["model.layers.8"].shape == (batch_size, d_in)
+
+    # Test polymorphic DictionaryTrainer step
+    cfg = TrainingConfig(
+        dataset_path="dummy",
+        batch_size=batch_size,
+        total_steps=10,
+        checkpoint_steps=5,
+        output_dir="dummy_out",
+    )
+    trainer = DictionaryTrainer(multi_dict, activation_buffer=None, config=cfg, device="cpu")
+    metrics = trainer.train_step(acts_dict)
+    assert "loss/total" in metrics
+    assert "layers/model_layers_0/nmse" in metrics
+    assert "metrics/mean_l0" in metrics
 
     # Normalize decoder weights
     multi_dict.normalize_decoder_weights()

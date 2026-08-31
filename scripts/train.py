@@ -140,7 +140,6 @@ def main():
 
     if is_multi_sae:
         from src.core.multi_dictionary import MultiLayerDictionary
-        from src.training.multi_trainer import MultiSAETrainer
 
         logger.info(f"Setting up Multi-Layer SAE training across {len(hook_points)} layers: {hook_points}")
         dict_map = {}
@@ -151,29 +150,8 @@ def main():
                 d_sae=d_sae,
                 **kwargs
             )
-        multi_dict = MultiLayerDictionary(dict_map)
-
-        full_buffer = ActivationBuffer(
-            model=model,
-            tokenizer=tokenizer,
-            hook_points=hook_points,
-            target_hook_points=target_hook_points,
-            dataset_path=dataset_path,
-            dataset_name=dataset_name,
-            batch_size=batch_size,
-            buffer_size=min(32768, batch_size * 8),
-            device=device,
-            return_dict=True,
-        )
-
-        trainer = MultiSAETrainer(
-            multi_dictionary=multi_dict,
-            activation_buffer=full_buffer,
-            config=training_cfg,
-            device=device,
-        )
-        trainer.train()
-
+        dict_model = MultiLayerDictionary(dict_map)
+        return_dict = True
     else:
         if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
             kwargs["n_layers"] = len(hook_points)
@@ -184,26 +162,28 @@ def main():
             d_sae=d_sae,
             **kwargs
         )
+        return_dict = False
 
-        full_buffer = ActivationBuffer(
-            model=model,
-            tokenizer=tokenizer,
-            hook_points=hook_points,
-            target_hook_points=target_hook_points,
-            dataset_path=dataset_path,
-            dataset_name=dataset_name,
-            batch_size=batch_size,
-            buffer_size=65536,
-            device=device,
-        )
+    full_buffer = ActivationBuffer(
+        model=model,
+        tokenizer=tokenizer,
+        hook_points=hook_points,
+        target_hook_points=target_hook_points,
+        dataset_path=dataset_path,
+        dataset_name=dataset_name,
+        batch_size=batch_size,
+        buffer_size=min(65536, batch_size * 16),
+        device=device,
+        return_dict=return_dict,
+    )
 
-        trainer = DictionaryTrainer(
-            dictionary_model=dict_model,
-            activation_buffer=full_buffer,
-            config=training_cfg,
-            device=device,
-        )
-        trainer.train()
+    trainer = DictionaryTrainer(
+        dictionary_model=dict_model,
+        activation_buffer=full_buffer,
+        config=training_cfg,
+        device=device,
+    )
+    trainer.train()
 
 
 if __name__ == "__main__":

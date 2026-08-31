@@ -30,7 +30,7 @@ class ActivationBuffer:
         context_length: int = 1024,
         buffer_size: int = 131_072,  # Total tokens stored in reservoir
         batch_size: int = 4096,      # Dictionary mini-batch size
-        model_batch_size: int = 4,   # Forward pass batch size
+        model_batch_size: int = 4,
         mask_bos: bool = True,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         dtype: torch.dtype = torch.float32,
@@ -64,7 +64,7 @@ class ActivationBuffer:
         self.mean: Optional[torch.Tensor] = None
         self.scale_factor: float = 1.0
 
-        # Memory buffer tensors (allocated on GPU/pinned memory)
+        # Reservoir storage on CPU (pinned for fast non-blocking transfer to GPU)
         self.buffer: Dict[str, torch.Tensor] = {}
         self.buffer_idx = 0
         self.tokens_buffered = 0
@@ -109,7 +109,7 @@ class ActivationBuffer:
     @torch.no_grad()
     def _fill_buffer(self) -> None:
         """
-        Fills the activation reservoir with memory-efficient contiguous allocations.
+        Fills the activation reservoir with memory-efficient contiguous allocations on CPU.
         """
         self.hook_manager.register_forward_hooks(self.all_hook_points)
         collected_acts: Dict[str, List[torch.Tensor]] = {hp: [] for hp in self.all_hook_points}
@@ -144,25 +144,31 @@ class ActivationBuffer:
             if self.mask_bos and mask.shape[1] > 0:
                 mask[:, 0] = False
 
-            # Extract activations cleanly
+            # Extract activations cleanly and store directly on CPU
             for hp in self.all_hook_points:
                 raw_act = self.hook_manager.activations[hp]
-                # Indexing with boolean mask produces a 2D tensor (num_valid_tokens, d_model)
-                valid_acts = raw_act[mask].to(dtype=self.dtype).contiguous()
+                valid_acts = raw_act[mask].to(device="cpu", dtype=self.dtype).contiguous()
                 collected_acts[hp].append(valid_acts)
 
             total_tokens_collected += valid_acts.shape[0]
 
-        # Concatenate and shuffle reservoir with zero unnecessary memory duplication
+        # Concatenate and shuffle reservoir on CPU with zero GPU VRAM consumption
         for hp in self.all_hook_points:
             cat_acts = torch.cat(collected_acts[hp], dim=0).contiguous()
-            perm = torch.randperm(cat_acts.shape[0], device=cat_acts.device)
-            self.buffer[hp] = cat_acts[perm].contiguous()
+            perm = torch.randperm(cat_acts.shape[0])
+            shuffled = cat_acts[perm].contiguous()
+            if torch.cuda.is_available():
+                self.buffer[hp] = shuffled.pin_memory()
+            else:
+                self.buffer[hp] = shuffled
             collected_acts[hp].clear()
 
         self.tokens_buffered = self.buffer[self.all_hook_points[0]].shape[0]
         self.buffer_idx = 0
         self.hook_manager.remove_hooks()
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def compute_normalization_stats(self, num_tokens: int = 50_000) -> Tuple[torch.Tensor, float]:
@@ -190,21 +196,24 @@ class ActivationBuffer:
 
         # Multi-SAE dictionary mode
         if self.return_dict:
-            return {hp: self.buffer[hp][start:end].contiguous() for hp in self.hook_points}
+            return {
+                hp: self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous()
+                for hp in self.hook_points
+            }
 
         # Transcoder mode
         if self.target_hook_points is not None:
-            x_in = self.buffer[self.hook_points[0]][start:end].contiguous()
-            y_out = self.buffer[self.target_hook_points[0]][start:end].contiguous()
+            x_in = self.buffer[self.hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
+            y_out = self.buffer[self.target_hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
             return x_in, y_out
 
         # Multi-layer Crosscoder mode
         if len(self.hook_points) > 1:
-            layer_acts = [self.buffer[hp][start:end].contiguous() for hp in self.hook_points]
+            layer_acts = [self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous() for hp in self.hook_points]
             return torch.stack(layer_acts, dim=1).contiguous()
 
         # Single-hook SAE mode
-        return self.buffer[self.hook_points[0]][start:end].contiguous()
+        return self.buffer[self.hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
 
     def __iter__(self) -> Iterator[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         while True:
