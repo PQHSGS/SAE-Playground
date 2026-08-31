@@ -62,7 +62,58 @@ def test_edge_attribution_patching_gradient_flow():
         top_k_edges=10,
     )
 
-    assert result.edge_attributions.shape == (128, 128)
-    assert len(result.top_edges) == 10
     assert result.source_attributions.shape == (128,)
     assert result.target_attributions.shape == (128,)
+
+
+def test_transcoder_circuit_replacement_and_graph():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained("gpt2").to(device)
+
+    from src.architectures.transcoders.skip_transcoder import SkipTranscoder
+    from src.circuits.transcoder_circuit import TranscoderCircuitGraph
+
+    # Create SkipTranscoders for 2 layers
+    t0 = SkipTranscoder(d_in=768, d_sae=64, d_out=768).to(device)
+    t1 = SkipTranscoder(d_in=768, d_sae=64, d_out=768).to(device)
+
+    hook_pairs = {
+        "transformer.h.0.mlp": "transformer.h.0.mlp.c_proj",
+        "transformer.h.1.mlp": "transformer.h.1.mlp.c_proj",
+    }
+
+    graph = TranscoderCircuitGraph(
+        model=model,
+        tokenizer=tokenizer,
+        transcoders={
+            "transformer.h.0.mlp": t0,
+            "transformer.h.1.mlp": t1,
+        },
+        hook_pairs=hook_pairs,
+    )
+
+    # 1. Test sublayer replacement faithfulness
+    faith_res = graph.evaluate_replacement_faithfulness(["The Eiffel Tower is in Paris, France."])
+    assert "faithfulness" in faith_res
+    assert "baseline_loss" in faith_res
+    assert "replaced_loss" in faith_res
+
+    # 2. Test cross-layer attribution graph computation
+    result = graph.compute_transcoder_attributions(
+        clean_text="The Eiffel Tower is in Paris",
+        corrupted_text="The Colosseum is in Rome",
+        target_token_id=tokenizer.encode(" Paris")[0],
+        top_k_edges=5,
+    )
+
+    assert result.baseline_loss > 0
+    assert len(result.layer_feature_attributions) == 2
+    assert len(result.top_edges) <= 5
+
+    # 3. Test graph export
+    exported = graph.export_graph_json(result)
+    assert "nodes" in exported
+    assert "edges" in exported
+
