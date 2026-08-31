@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -42,7 +42,7 @@ class GatedSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         gate_pre_acts = torch.matmul(x_centered, self.w_gate) + self.b_gate
         pi_gate = (gate_pre_acts > 0).float()
@@ -50,8 +50,11 @@ class GatedSAE(BaseSAE):
         # Magnitude path with learned weight scaling
         mag_pre_acts = torch.matmul(x_centered, self.w_gate * torch.exp(self.r_mag)) + self.b_mag
         r_mag = torch.relu(mag_pre_acts)
+        f = pi_gate * r_mag
 
-        return pi_gate * r_mag
+        if return_pre_acts:
+            return f, gate_pre_acts, mag_pre_acts
+        return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
         return torch.matmul(f, self.w_dec) + self.b_dec
@@ -64,14 +67,7 @@ class GatedSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        gate_pre_acts = torch.matmul(x_centered, self.w_gate) + self.b_gate
-        pi_gate = (gate_pre_acts > 0).float()
-
-        mag_pre_acts = torch.matmul(x_centered, self.w_gate * torch.exp(self.r_mag)) + self.b_mag
-        r_mag = torch.relu(mag_pre_acts)
-        f = pi_gate * r_mag
-
+        f, gate_pre_acts, mag_pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 
@@ -90,6 +86,11 @@ class GatedSAE(BaseSAE):
             reconstructed=x_hat,
             feature_acts=f,
             loss=total_loss,
-            loss_dict={"mse_loss": mse_loss, "l1_loss": l1_loss, "aux_loss": aux_loss, "total_loss": total_loss},
+            loss_dict={
+                "mse_loss": mse_loss,
+                "l1_loss": l1_loss,
+                "aux_loss": aux_loss,
+                "total_loss": total_loss,
+            },
             extra_dict={"l0": (f > 0).float().sum(dim=-1).mean().item(), "pre_acts": mag_pre_acts}
         )

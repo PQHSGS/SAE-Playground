@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import math
 import torch
 import torch.nn as nn
@@ -84,10 +84,13 @@ class JumpReLUSAE(BaseSAE):
     def threshold(self) -> torch.Tensor:
         return torch.exp(self.log_threshold)
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
-        return JumpReLUFunction.apply(pre_acts, self.threshold, self.bandwidth)
+        f = JumpReLUFunction.apply(pre_acts, self.threshold, self.bandwidth)
+        if return_pre_acts:
+            return f, pre_acts
+        return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
         return torch.matmul(f, self.w_dec) + self.b_dec
@@ -100,9 +103,7 @@ class JumpReLUSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
-        f = JumpReLUFunction.apply(pre_acts, self.threshold, self.bandwidth)
+        f, pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
 
         mse_loss = nn.functional.mse_loss(x_hat, target)

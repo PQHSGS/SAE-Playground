@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseTranscoder, DictionaryOutput
@@ -34,11 +34,16 @@ class GatedTranscoder(BaseTranscoder):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         gate_pre = torch.matmul(x, self.w_gate) + self.b_gate
         pi_gate = (gate_pre > 0).float()
         mag_pre = torch.matmul(x, self.w_gate * torch.exp(self.r_mag)) + self.b_mag
-        return pi_gate * torch.relu(mag_pre)
+        r_mag = torch.relu(mag_pre)
+        f = pi_gate * r_mag
+
+        if return_pre_acts:
+            return f, gate_pre, mag_pre
+        return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
         return torch.matmul(f, self.w_dec) + self.b_dec
@@ -53,12 +58,7 @@ class GatedTranscoder(BaseTranscoder):
         if target is None:
             raise ValueError("GatedTranscoder requires a target tensor.")
 
-        gate_pre = torch.matmul(x, self.w_gate) + self.b_gate
-        pi_gate = (gate_pre > 0).float()
-        mag_pre = torch.matmul(x, self.w_gate * torch.exp(self.r_mag)) + self.b_mag
-        r_mag = torch.relu(mag_pre)
-        f = pi_gate * r_mag
-
+        f, gate_pre, mag_pre = self.encode(x, return_pre_acts=True)
         y_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(y_hat, target)
         l1_loss = self.l1_coeff * torch.sigmoid(gate_pre).sum(dim=-1).mean()

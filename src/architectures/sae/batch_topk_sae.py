@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -9,9 +9,10 @@ from src.architectures.registry import register_dictionary
 @register_dictionary("batch_topk_sae")
 class BatchTopKSAE(BaseSAE):
     """
-    BatchTopK Sparse Autoencoder.
-    Selects top (B * k) activations across the entire token batch,
-    allowing variable token-level sparsity and preventing dead latents.
+    BatchTopK Sparse Autoencoder (Bussmann et al., 2024).
+    Applies Top-K sparsity across the entire batch (batch_size * k active latents total)
+    during training to eliminate dead features and allow dynamic per-token sparsity.
+    During evaluation, falls back to standard per-token Top-K.
     """
 
     def __init__(self, d_in: int, d_sae: int, k: int = 32, aux_loss_coeff: float = 1.0 / 32.0, **kwargs):
@@ -34,9 +35,10 @@ class BatchTopKSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
+        raw_pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
+        pre_acts = torch.relu(raw_pre_acts)
         
         orig_shape = pre_acts.shape
         flat_acts = pre_acts.view(-1, self.d_sae)
@@ -56,6 +58,8 @@ class BatchTopKSAE(BaseSAE):
             f = torch.zeros_like(pre_acts)
             f.scatter_(dim=-1, index=idx, src=val)
 
+        if return_pre_acts:
+            return f, raw_pre_acts
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -69,26 +73,7 @@ class BatchTopKSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        raw_pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
-        pre_acts = torch.relu(raw_pre_acts)
-
-        orig_shape = pre_acts.shape
-        flat_acts = pre_acts.view(-1, self.d_sae)
-        batch_size_tokens = flat_acts.shape[0]
-
-        if self.training:
-            total_k = min(batch_size_tokens * self.k, flat_acts.numel())
-            flat_view = flat_acts.view(-1)
-            val, idx = torch.topk(flat_view, k=total_k)
-            sparse_flat = torch.zeros_like(flat_view)
-            sparse_flat.scatter_(dim=0, index=idx, src=val)
-            f = sparse_flat.view(orig_shape)
-        else:
-            val, idx = torch.topk(pre_acts, k=min(self.k, self.d_sae), dim=-1)
-            f = torch.zeros_like(pre_acts)
-            f.scatter_(dim=-1, index=idx, src=val)
-
+        f, raw_pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 

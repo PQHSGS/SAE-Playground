@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -49,7 +49,7 @@ class TreeSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         # Stage 1: Coarse routing
         coarse_acts = torch.relu(self.coarse_enc(x_centered))
@@ -62,6 +62,9 @@ class TreeSAE(BaseSAE):
         val, idx = torch.topk(fine_pre_acts, k=min(self.k, fine_pre_acts.shape[-1]), dim=-1)
         f = torch.zeros_like(fine_pre_acts)
         f.scatter_(dim=-1, index=idx, src=val)
+
+        if return_pre_acts:
+            return f, coarse_acts, fine_pre_acts
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -75,19 +78,7 @@ class TreeSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-
-        # Stage 1: Coarse concepts
-        coarse_acts = torch.relu(self.coarse_enc(x_centered))
-        
-        # Stage 2: Fine features conditioned on coarse activations
-        joint_input = torch.cat([x_centered, coarse_acts], dim=-1)
-        fine_pre_acts = torch.relu(self.fine_enc(joint_input))
-
-        val, idx = torch.topk(fine_pre_acts, k=min(self.k, fine_pre_acts.shape[-1]), dim=-1)
-        f = torch.zeros_like(fine_pre_acts)
-        f.scatter_(dim=-1, index=idx, src=val)
-
+        f, coarse_acts, fine_pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_fine = nn.functional.mse_loss(x_hat, target)
 

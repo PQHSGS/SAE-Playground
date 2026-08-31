@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseCrosscoder, DictionaryOutput
@@ -46,7 +46,7 @@ class MultiLayerCrosscoder(BaseCrosscoder):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
             x: Tensor of shape (..., n_layers, d_in)
@@ -60,6 +60,8 @@ class MultiLayerCrosscoder(BaseCrosscoder):
         val, idx = torch.topk(pre_acts, k=min(self.k, pre_acts.shape[-1]), dim=-1)
         f = torch.zeros_like(pre_acts)
         f.scatter_(dim=-1, index=idx, src=val)
+        if return_pre_acts:
+            return f, pre_acts
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -80,13 +82,7 @@ class MultiLayerCrosscoder(BaseCrosscoder):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.einsum("...li,lid->...d", x_centered, self.w_enc) + self.b_enc)
-
-        val, idx = torch.topk(pre_acts, k=min(self.k, pre_acts.shape[-1]), dim=-1)
-        f = torch.zeros_like(pre_acts)
-        f.scatter_(dim=-1, index=idx, src=val)
-
+        f, pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 
@@ -96,7 +92,7 @@ class MultiLayerCrosscoder(BaseCrosscoder):
         # Auxiliary loss for dead latents (OpenAI Aux Loss formulation)
         if dead_mask is not None and dead_mask.any() and self.aux_loss_coeff > 0:
             residual = target - x_hat
-            dead_pre_acts = pre_acts * dead_mask.float()
+            dead_pre_acts = torch.nn.functional.softplus(pre_acts) * dead_mask.float()
             dead_k = min(self.k, int(dead_mask.sum().item()))
             if dead_k > 0:
                 dead_val, dead_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)

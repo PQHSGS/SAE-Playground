@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -44,7 +44,7 @@ class MatchingPursuitSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = (x - self.b_dec).contiguous()
         original_shape = x_centered.shape
 
@@ -87,6 +87,9 @@ class MatchingPursuitSAE(BaseSAE):
         if len(original_shape) > 2:
             acts = acts.view(*original_shape[:-1], self.d_sae)
 
+        if return_pre_acts:
+            pre_acts = torch.relu(torch.matmul(x_centered, self.w_dec.T))
+            return acts, pre_acts
         return acts
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -100,9 +103,8 @@ class MatchingPursuitSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f = self.encode(x)
+        f, pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
-        pre_acts = torch.relu(torch.matmul(x - self.b_dec, self.w_dec.T))
 
         mse_loss = nn.functional.mse_loss(x_hat, target)
         return DictionaryOutput(

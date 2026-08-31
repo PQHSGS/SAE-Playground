@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -51,7 +51,7 @@ class SASA(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
 
@@ -64,6 +64,9 @@ class SASA(BaseSAE):
         val, idx = torch.topk(pre_acts, k=min(max(k_int, self.min_k), self.max_k), dim=-1)
         f = torch.zeros_like(pre_acts)
         f.scatter_(dim=-1, index=idx, src=val)
+
+        if return_pre_acts:
+            return f, pre_acts, k_dynamic
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -77,18 +80,7 @@ class SASA(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
-
-        # Dynamic sparsity budget prediction
-        k_ratio = self.k_predictor(x_centered)
-        k_dynamic = self.min_k + (self.max_k - self.min_k) * k_ratio
-        
-        k_int = int(k_dynamic.mean().item())
-        val, idx = torch.topk(pre_acts, k=min(max(k_int, self.min_k), self.max_k), dim=-1)
-        f = torch.zeros_like(pre_acts)
-        f.scatter_(dim=-1, index=idx, src=val)
-
+        f, pre_acts, k_dynamic = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 

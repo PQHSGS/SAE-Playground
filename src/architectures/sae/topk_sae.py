@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -41,14 +41,17 @@ class TopKSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
-        pre_acts = torch.relu(torch.matmul(x_centered, self.w_enc) + self.b_enc)
+        raw_pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
+        pre_acts = torch.relu(raw_pre_acts)
         
         # Apply exact TopK sparsity per token
         val, idx = torch.topk(pre_acts, k=min(self.k, pre_acts.shape[-1]), dim=-1)
         f = torch.zeros_like(pre_acts)
         f.scatter_(dim=-1, index=idx, src=val)
+        if return_pre_acts:
+            return f, raw_pre_acts
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
@@ -62,16 +65,9 @@ class TopKSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        raw_pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
-        pre_acts = torch.relu(raw_pre_acts)
+        f, raw_pre_acts = self.encode(x, return_pre_acts=True)
 
-        # TopK selection
-        val, idx = torch.topk(pre_acts, k=min(self.k, pre_acts.shape[-1]), dim=-1)
-        f = torch.zeros_like(pre_acts)
-        f.scatter_(dim=-1, index=idx, src=val)
-
-        x_hat = torch.matmul(f, self.w_dec) + self.b_dec
+        x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 
         loss_dict = {"mse_loss": mse_loss}

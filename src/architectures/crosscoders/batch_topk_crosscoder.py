@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseCrosscoder, DictionaryOutput
@@ -33,39 +33,7 @@ class BatchTopKCrosscoder(BaseCrosscoder):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        x_centered = x - self.b_dec
-        pre_acts = torch.einsum("...li,lid->...d", x_centered, self.w_enc) + self.b_enc
-        pre_acts = torch.relu(pre_acts)
-
-        orig_shape = pre_acts.shape
-        flat = pre_acts.view(-1, self.d_sae)
-        batch_tokens = flat.shape[0]
-
-        if self.training:
-            total_k = min(batch_tokens * self.k, flat.numel())
-            flat_view = flat.view(-1)
-            val, idx = torch.topk(flat_view, k=total_k)
-            sparse_flat = torch.zeros_like(flat_view)
-            sparse_flat.scatter_(dim=0, index=idx, src=val)
-            return sparse_flat.view(orig_shape)
-        else:
-            val, idx = torch.topk(pre_acts, k=min(self.k, self.d_sae), dim=-1)
-            f = torch.zeros_like(pre_acts)
-            f.scatter_(dim=-1, index=idx, src=val)
-            return f
-
-    def decode(self, f: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("...d,ldi->...li", f, self.w_dec) + self.b_dec
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        target: Optional[torch.Tensor] = None,
-        dead_mask: Optional[torch.Tensor] = None,
-        **kwargs
-    ) -> DictionaryOutput:
-        target = target if target is not None else x
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         pre_acts = torch.einsum("...li,lid->...d", x_centered, self.w_enc) + self.b_enc
         pre_acts = torch.relu(pre_acts)
@@ -86,6 +54,22 @@ class BatchTopKCrosscoder(BaseCrosscoder):
             f = torch.zeros_like(pre_acts)
             f.scatter_(dim=-1, index=idx, src=val)
 
+        if return_pre_acts:
+            return f, pre_acts
+        return f
+
+    def decode(self, f: torch.Tensor) -> torch.Tensor:
+        return torch.einsum("...d,ldi->...li", f, self.w_dec) + self.b_dec
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
+        dead_mask: Optional[torch.Tensor] = None,
+        **kwargs
+    ) -> DictionaryOutput:
+        target = target if target is not None else x
+        f, pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
         mse_loss = nn.functional.mse_loss(x_hat, target)
 
@@ -95,7 +79,7 @@ class BatchTopKCrosscoder(BaseCrosscoder):
         # Auxiliary loss for dead latents (OpenAI Aux Loss across multi-layer reconstructions)
         if dead_mask is not None and dead_mask.any() and self.aux_loss_coeff > 0:
             residual = target - x_hat
-            dead_pre_acts = pre_acts * dead_mask.float()
+            dead_pre_acts = torch.nn.functional.softplus(pre_acts) * dead_mask.float()
             dead_k = min(self.k, int(dead_mask.sum().item()))
             if dead_k > 0:
                 dead_val, dead_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)

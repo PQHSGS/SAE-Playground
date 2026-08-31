@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from src.core.base_dictionary import BaseSAE, DictionaryOutput
@@ -34,10 +34,13 @@ class StandardSAE(BaseSAE):
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
-        return torch.relu(pre_acts)
+        f = torch.relu(pre_acts)
+        if return_pre_acts:
+            return f, pre_acts
+        return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
         return torch.matmul(f, self.w_dec) + self.b_dec
@@ -50,9 +53,7 @@ class StandardSAE(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        x_centered = x - self.b_dec
-        pre_acts = torch.matmul(x_centered, self.w_enc) + self.b_enc
-        f = torch.relu(pre_acts)
+        f, pre_acts = self.encode(x, return_pre_acts=True)
         x_hat = self.decode(f)
 
         # Compute losses according to Bricken et al. 2023 (scaled by decoder norms)

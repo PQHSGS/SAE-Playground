@@ -34,13 +34,14 @@ class BaseDictionary(nn.Module, ABC):
         self.config_kwargs = kwargs
 
     @abstractmethod
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, return_pre_acts: bool = False) -> Any:
         """
         Map input activations to sparse latent feature activations.
         Args:
             x: Input tensor of shape (..., d_in)
+            return_pre_acts: If True, returns (f, pre_acts) or (f, ...)
         Returns:
-            f: Sparse feature activations of shape (..., d_sae)
+            f: Sparse feature activations of shape (..., d_sae) or tuple with pre-activations
         """
 
     @abstractmethod
