@@ -27,7 +27,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark and evaluate trained dictionaries via YAML config or checkpoint dir.")
     parser.add_argument("--config", type=str, default=None, help="Path to experiment YAML config file")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Direct directory containing checkpoints")
-    parser.add_argument("--num_eval_tokens", type=int, default=16384, help="Number of validation tokens to evaluate")
+    parser.add_argument("--model_name_or_path", type=str, default=None, help="Target LLM model identifier")
+    parser.add_argument("--num_eval_tokens", type=int, default=4096, help="Number of validation tokens to evaluate")
     parser.add_argument("--full_benchmark", action="store_true", default=False, help="Run complete multi-dimensional SAEBench suite (splitting, absorption, Gini, downstream faithfulness)")
     return parser.parse_args()
 
@@ -40,8 +41,8 @@ def main():
     if args.config:
         cfg = load_yaml(args.config)
         output_dir = cfg.get("output_dir", "checkpoints")
-        model_name = cfg.get("model_name_or_path", "gpt2")
-        hook_points = cfg.get("hook_points", ["transformer.h.6"])
+        model_name = args.model_name_or_path or cfg.get("model_name_or_path", "google/gemma-3-270m")
+        hook_points = cfg.get("hook_points", ["model.layers.9"])
 
         if os.path.exists(output_dir):
             subdirs = [os.path.join(output_dir, d) for d in os.listdir(output_dir) if d.startswith("step_")]
@@ -54,8 +55,8 @@ def main():
             checkpoint_dir = output_dir
     elif args.checkpoint_dir:
         checkpoint_dir = args.checkpoint_dir
-        model_name = "gpt2"
-        hook_points = ["transformer.h.6"]
+        model_name = args.model_name_or_path or "google/gemma-3-270m"
+        hook_points = ["model.layers.9"]
     else:
         raise ValueError("Please provide either --config or --checkpoint_dir")
 

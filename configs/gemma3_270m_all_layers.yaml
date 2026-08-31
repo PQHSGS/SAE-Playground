@@ -4,6 +4,7 @@ torch_dtype: "bfloat16"
 load_in_4bit: false
 context_length: 512
 mask_bos: true
+normalize_activations: true
 
 # Train all 18 layers from a single forward pass through Gemma 3 270M
 hook_points:
@@ -27,7 +28,7 @@ hook_points:
   - "model.layers.17"
 
 architecture: "batch_topk"
-expansion_factor: 8       # d_sae = 640 * 16 = 10,240 features per layer
+expansion_factor: 8       # d_sae = 640 * 8 = 5,120 features per layer
 k: 32                      # BatchTopK per layer
 aux_loss_coeff: 0.03125    # OpenAI Aux Loss for dead latents
 

@@ -60,7 +60,9 @@ class ActivationBuffer:
         self.dataset_split = dataset_split
         self._init_dataset()
 
-        # Running statistics for normalization
+        # Running statistics for normalization across all hook points
+        self.means: Dict[str, torch.Tensor] = {}
+        self.scale_factors: Dict[str, float] = {}
         self.mean: Optional[torch.Tensor] = None
         self.scale_factor: float = 1.0
 
@@ -99,11 +101,10 @@ class ActivationBuffer:
                         texts.append(text)
                 except StopIteration:
                     self._init_dataset()
-        else:
-            texts = [
-                "Mechanistic interpretability of sparse autoencoders, transcoders, and crosscoders in deep transformers."
-                "Neural networks represent concepts in linear subspaces through superposition and polysemanticity."
-            ] * self.model_batch_size
+                    if self.data_iter is None:
+                        break
+        if not texts:
+            texts = ["The quick brown fox jumps over the lazy dog in natural language processing."] * self.model_batch_size
         return texts
 
     @torch.no_grad()
@@ -115,38 +116,30 @@ class ActivationBuffer:
         collected_acts: Dict[str, List[torch.Tensor]] = {hp: [] for hp in self.all_hook_points}
         total_tokens_collected = 0
 
-        # Run model forward under autocast for VRAM efficiency
-        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-
         while total_tokens_collected < self.buffer_size:
             texts = self._get_text_batch()
-            encoding = self.tokenizer(
+            encodings = self.tokenizer(
                 texts,
                 truncation=True,
                 max_length=self.context_length,
-                padding="max_length",
+                padding=True,
                 return_tensors="pt",
-            )
-            input_ids = encoding["input_ids"].to(self.device, non_blocking=True)
-            attention_mask = encoding["attention_mask"].to(self.device, non_blocking=True)
+            ).to(self.device)
 
-            # Bypass final lm_head vocabulary projection to save massive VRAM (e.g. 262k logits)
+            input_ids = encodings["input_ids"]
+            attention_mask = encodings["attention_mask"].bool()
+
+            # Optional BOS attention sink masking
+            if self.mask_bos and attention_mask.shape[1] > 1:
+                attention_mask[:, 0] = False
+
             base_model = getattr(self.model, "model", getattr(self.model, "transformer", self.model))
+            with torch.autocast(device_type="cuda" if "cuda" in str(self.device) else "cpu", dtype=self.dtype):
+                _ = base_model(input_ids=input_ids, attention_mask=encodings["attention_mask"])
 
-            if torch.cuda.is_available():
-                with torch.amp.autocast("cuda", dtype=amp_dtype):
-                    _ = base_model(input_ids=input_ids, attention_mask=attention_mask)
-            else:
-                _ = base_model(input_ids=input_ids, attention_mask=attention_mask)
-
-            # Mask out padding tokens and token-0 (BOS attention sink)
-            mask = attention_mask.bool()
-            if self.mask_bos and mask.shape[1] > 0:
-                mask[:, 0] = False
-
-            # Extract activations cleanly and store directly on CPU
+            mask = attention_mask.view(-1)
             for hp in self.all_hook_points:
-                raw_act = self.hook_manager.activations[hp]
+                raw_act = self.hook_manager.activations[hp].view(-1, self.hook_manager.activations[hp].shape[-1])
                 valid_acts = raw_act[mask].to(device="cpu", dtype=self.dtype).contiguous()
                 collected_acts[hp].append(valid_acts)
 
@@ -170,21 +163,34 @@ class ActivationBuffer:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        # Compute per-layer normalization scale factors on first buffer fill if enabled
+        if self.normalize_activations and not self.scale_factors:
+            self.compute_normalization_stats()
+
     @torch.no_grad()
-    def compute_normalization_stats(self, num_tokens: int = 50_000) -> Tuple[torch.Tensor, float]:
+    def compute_normalization_stats(self, num_tokens: int = 50_000) -> Dict[str, float]:
         """
-        Calculate running mean and scalar normalization factor:
-        s = sqrt(d) / E[||x - mu||_2]
+        Calculate running mean and scalar normalization factor per hook point:
+        s_l = sqrt(d) / E[||x_l - mu_l||_2]
         """
-        self._fill_buffer()
+        if self.tokens_buffered == 0:
+            self._fill_buffer()
+
+        for hp in self.all_hook_points:
+            sample_len = min(num_tokens, self.buffer[hp].shape[0])
+            sample = self.buffer[hp][:sample_len].float().contiguous()
+            mean = sample.mean(dim=0, keepdim=True).contiguous()
+            centered = sample - mean
+            avg_norm = torch.norm(centered, p=2, dim=-1).mean().item()
+            d_in = sample.shape[-1]
+            scale = math.sqrt(d_in) / (avg_norm + 1e-8)
+            self.means[hp] = mean.to(dtype=self.dtype, device=self.device)
+            self.scale_factors[hp] = float(scale)
+
         primary_hp = self.hook_points[0]
-        sample = self.buffer[primary_hp][:num_tokens].float().contiguous()
-        self.mean = sample.mean(dim=0, keepdim=True).contiguous()
-        centered = sample - self.mean
-        avg_norm = torch.norm(centered, p=2, dim=-1).mean().item()
-        d_in = sample.shape[-1]
-        self.scale_factor = math.sqrt(d_in) / (avg_norm + 1e-8)
-        return self.mean.to(dtype=self.dtype, device=self.device), self.scale_factor
+        self.mean = self.means.get(primary_hp)
+        self.scale_factor = self.scale_factors.get(primary_hp, 1.0)
+        return self.scale_factors
 
     def next_batch(self) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
         if self.tokens_buffered == 0 or (self.buffer_idx + self.batch_size) > self.tokens_buffered:
@@ -194,34 +200,38 @@ class ActivationBuffer:
         end = start + self.batch_size
         self.buffer_idx = end
 
+        # Helper to retrieve, transfer to GPU, and apply scale normalization
+        def get_slice(hp: str) -> torch.Tensor:
+            tensor = self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous()
+            if self.normalize_activations and hp in self.scale_factors:
+                tensor = tensor * self.scale_factors[hp]
+            return tensor
+
         # Multi-dictionary mode (Multi-SAE and Multi-Transcoder)
         if self.return_dict:
             if self.target_hook_points is not None:
                 return {
-                    hp: (
-                        self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous(),
-                        self.buffer[target_hp][start:end].to(self.device, non_blocking=True).contiguous(),
-                    )
+                    hp: (get_slice(hp), get_slice(target_hp))
                     for hp, target_hp in zip(self.hook_points, self.target_hook_points)
                 }
             return {
-                hp: self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous()
+                hp: get_slice(hp)
                 for hp in self.hook_points
             }
 
         # Transcoder mode
         if self.target_hook_points is not None:
-            x_in = self.buffer[self.hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
-            y_out = self.buffer[self.target_hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
+            x_in = get_slice(self.hook_points[0])
+            y_out = get_slice(self.target_hook_points[0])
             return x_in, y_out
 
         # Multi-layer Crosscoder mode
         if len(self.hook_points) > 1:
-            layer_acts = [self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous() for hp in self.hook_points]
+            layer_acts = [get_slice(hp) for hp in self.hook_points]
             return torch.stack(layer_acts, dim=1).contiguous()
 
         # Single-hook SAE mode
-        return self.buffer[self.hook_points[0]][start:end].to(self.device, non_blocking=True).contiguous()
+        return get_slice(self.hook_points[0])
 
     def __iter__(self) -> Iterator[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         while True:

@@ -3,6 +3,7 @@ model_name_or_path: "cattonpm/PlanckGPT-v0.10.0"
 torch_dtype: "bfloat16"
 context_length: 512
 mask_bos: true
+normalize_activations: true
 
 # Train all 14 depth layers simultaneously from 1 LLM forward pass
 hook_points:
@@ -22,7 +23,7 @@ hook_points:
   - "transformer.13"
 
 architecture: "batch_topk"
-expansion_factor: 16       # d_sae = 896 * 16 = 14,336 features per layer
+expansion_factor: 8       # d_sae = 896 * 8 = 7,168 features per layer
 k: 32                      # BatchTopK: selects total_k = (batch_size * k) active latents globally
 aux_loss_coeff: 0.03125    # OpenAI Aux Loss for dead latents
 
@@ -33,11 +34,11 @@ batch_size: 4096
 learning_rate: 0.0003
 min_learning_rate: 0.00001
 lr_warmup_steps: 1000
-total_steps: 20000
+total_steps: 25000
 checkpoint_steps: 2500
 dead_feature_threshold: 1000000
 use_ghost_grads: true
 ghost_grad_coeff: 0.1
-output_dir: "checkpoints/planckgpt_all_layers"
+output_dir: "checkpoints/planckgpt_resid"
 wandb_project: "planckgpt-sae"
 seed: 42

@@ -34,9 +34,11 @@ class TopKSAE(BaseSAE):
         self._reset_parameters()
 
     def _reset_parameters(self):
-        nn.init.kaiming_uniform_(self.w_enc, nonlinearity="relu")
         nn.init.kaiming_uniform_(self.w_dec, nonlinearity="linear")
         self.normalize_decoder_weights()
+        self.w_enc.data.copy_(self.w_dec.data.T)
+        nn.init.zeros_(self.b_enc)
+        nn.init.zeros_(self.b_dec)
 
     def get_decoder_weights(self) -> torch.Tensor:
         return self.w_dec

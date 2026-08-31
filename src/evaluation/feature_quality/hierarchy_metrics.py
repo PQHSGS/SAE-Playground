@@ -24,9 +24,14 @@ def compute_hierarchy_and_monosemanticity(
     num_tokens, d_sae = f.shape
 
     # 1. Gini coefficient of feature activation distribution across all tokens
-    # Sample subset of active features for fast computation
-    active_feats = f[:, (f > 0).any(dim=0)]
-    if active_feats.shape[1] > 0:
+    # Sample subset of active features for fast memory-efficient computation
+    active_mask = (f > 0).any(dim=0)
+    active_indices = active_mask.nonzero(as_tuple=True)[0]
+    if len(active_indices) > 512:
+        active_indices = active_indices[:512]
+        
+    if len(active_indices) > 0:
+        active_feats = f[:, active_indices]
         sorted_acts, _ = torch.sort(active_feats, dim=0)
         n = num_tokens
         index = torch.arange(1, n + 1, device=device, dtype=torch.float32).unsqueeze(1)
