@@ -62,10 +62,15 @@ def main():
     model, tokenizer = load_model_and_tokenizer(model_name, device_map="auto")
     
     import json
-    with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
-        cfg = json.load(f)
-    cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-    dict_model = cls.from_pretrained(checkpoint_dir, device=device)
+    if os.path.exists(os.path.join(checkpoint_dir, "multi_sae_config.json")):
+        from src.core.multi_dictionary import MultiLayerDictionary
+        multi_dict = MultiLayerDictionary.from_pretrained(checkpoint_dir, device=device)
+        dict_model = multi_dict.get_dictionary(hook_point)
+    else:
+        with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
+            cfg = json.load(f)
+        cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
+        dict_model = cls.from_pretrained(checkpoint_dir, device=device)
 
     engine = FeatureSteeringEngine(
         model=model,

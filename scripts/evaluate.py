@@ -1,20 +1,22 @@
 import argparse
 import os
 import sys
+import json
+import yaml
 import torch
+from rich.console import Console
+from rich.table import Table
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.base_dictionary import BaseDictionary
+from src.core.multi_dictionary import MultiLayerDictionary
 from src.architectures.registry import get_dictionary_cls
 from src.utils.hf_helpers import load_model_and_tokenizer
 from src.core.activation_buffer import ActivationBuffer
 from src.evaluation.metrics import compute_reconstruction_metrics, compute_ce_loss_recovery
 from src.evaluation.feature_stats import compute_feature_statistics
-
-
-import yaml
 
 
 def load_yaml(path: str) -> dict:
@@ -27,22 +29,22 @@ def load_yaml(path: str) -> dict:
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark and evaluate trained dictionaries via YAML config or checkpoint dir.")
     parser.add_argument("--config", type=str, default=None, help="Path to experiment YAML config file")
-    parser.add_argument("--checkpoint_dir", type=str, default=None, help="Direct directory containing config.json and model.safetensors")
+    parser.add_argument("--checkpoint_dir", type=str, default=None, help="Direct directory containing checkpoints")
     parser.add_argument("--num_eval_tokens", type=int, default=16384)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    console = Console()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.config:
         cfg = load_yaml(args.config)
         output_dir = cfg.get("output_dir", "checkpoints")
         model_name = cfg.get("model_name_or_path", "gpt2")
-        hook_point = cfg.get("hook_points", ["transformer.h.6"])[0]
+        hook_points = cfg.get("hook_points", ["transformer.h.6"])
 
-        # Find latest step checkpoint in output_dir
         if os.path.exists(output_dir):
             subdirs = [os.path.join(output_dir, d) for d in os.listdir(output_dir) if d.startswith("step_")]
             if subdirs:
@@ -55,60 +57,61 @@ def main():
     elif args.checkpoint_dir:
         checkpoint_dir = args.checkpoint_dir
         model_name = "gpt2"
-        hook_point = "transformer.h.6"
+        hook_points = ["transformer.h.6"]
     else:
-        raise ValueError("Please provide either --config (e.g. --config configs/gpt2_topk.yaml) or --checkpoint_dir")
+        raise ValueError("Please provide either --config or --checkpoint_dir")
 
-    print(f"Loading dictionary from {checkpoint_dir}...")
-    import json
-    with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
-        dict_cfg = json.load(f)
+    console.print(f"[bold green]Loading checkpoint from:[/] {checkpoint_dir}")
+    is_multi = os.path.exists(os.path.join(checkpoint_dir, "multi_sae_config.json"))
 
-    cls_name = dict_cfg.get("class_name", "TopKSAE")
-    cls = get_dictionary_cls(cls_name)
-    dict_model = cls.from_pretrained(checkpoint_dir, device=device)
+    if is_multi:
+        multi_dict = MultiLayerDictionary.from_pretrained(checkpoint_dir, device=device)
+        hook_points = list(multi_dict.hook_point_map.values())
+    else:
+        with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
+            dict_cfg = json.load(f)
+        cls_name = dict_cfg.get("class_name", "TopKSAE")
+        sae = get_dictionary_cls(cls_name).from_pretrained(checkpoint_dir, device=device)
+        primary_hp = hook_points[0] if hook_points else "default"
+        multi_dict = MultiLayerDictionary({primary_hp: sae})
 
-    print(f"Loading target LLM {model_name}...")
+    console.print(f"[bold blue]Loading base model:[/] {model_name}...")
     model, tokenizer = load_model_and_tokenizer(model_name, device_map="auto")
 
     buffer = ActivationBuffer(
         model=model,
         tokenizer=tokenizer,
-        hook_points=[hook_point],
+        hook_points=hook_points,
         batch_size=args.num_eval_tokens,
         buffer_size=args.num_eval_tokens,
         device=device,
+        return_dict=True,
     )
 
-    acts = buffer.next_batch()
-    if isinstance(acts, (tuple, list)):
-        acts = acts[0]
+    batch_dict = buffer.next_batch()
 
-    print("\n--- 1. Reconstruction & Sparsity Metrics ---")
-    recon_metrics = compute_reconstruction_metrics(dict_model, acts)
-    for k, v in recon_metrics.items():
-        print(f"  {k:20s}: {v:.6f}")
+    table = Table(title="Evaluation & Benchmark Summary across Layer Dictionaries")
+    table.add_column("Layer / Hook Point", style="cyan", no_wrap=True)
+    table.add_column("NMSE", justify="right", style="magenta")
+    table.add_column("L0 (Active)", justify="right", style="green")
+    table.add_column("Explained Var", justify="right", style="yellow")
+    table.add_column("Dead Latents (%)", justify="right", style="red")
 
-    print("\n--- 2. Feature Utilization & Dead Neurons ---")
-    feat_stats = compute_feature_statistics(dict_model, acts)
-    for k, v in feat_stats.items():
-        print(f"  {k:20s}: {v}")
+    for hp in hook_points:
+        sae = multi_dict.get_dictionary(hp)
+        acts = batch_dict[hp]
+        recon_metrics = compute_reconstruction_metrics(sae, acts)
+        feat_stats = compute_feature_statistics(sae, acts)
 
-    print("\n--- 3. Downstream Cross-Entropy Loss Recovery ---")
-    test_texts = [
-        "In physics, spacetime is any mathematical model which fuses the three dimensions of space and the one dimension of time into a single four-dimensional continuum.",
-        "The quick brown fox jumps over the lazy dog in the sunny meadow near the river bank.",
-    ]
-    ce_metrics = compute_ce_loss_recovery(
-        model=model,
-        tokenizer=tokenizer,
-        dictionary_model=dict_model,
-        hook_point=hook_point,
-        test_texts=test_texts,
-        device=device,
-    )
-    for k, v in ce_metrics.items():
-        print(f"  {k:20s}: {v:.6f}")
+        table.add_row(
+            hp,
+            f"{recon_metrics['nmse']:.4f}",
+            f"{recon_metrics['l0']:.1f}",
+            f"{recon_metrics['explained_variance'] * 100:.1f}%",
+            f"{feat_stats['dead_features_pct']:.1f}%",
+        )
+
+    console.print(table)
 
 
 if __name__ == "__main__":
