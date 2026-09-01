@@ -1,6 +1,6 @@
 from typing import List
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
 from src.auto_interpret.prompts import EXPLANATION_SYSTEM_PROMPT, EXPLANATION_USER_PROMPT
 from src.auto_interpret.sample_collector import ActivatingSnippet
 from src.utils.logging import setup_logger
@@ -10,9 +10,8 @@ logger = setup_logger("explainer")
 
 class FeatureExplainer:
     """
-    100% Local LLM-powered explanation generator for dictionary features.
-    Designed for local quantized instruct models (e.g. google/gemma-3-4b-it in 4-bit / 8-bit).
-    Zero external API calls.
+    100% Local GPU LLM-powered explanation generator for dictionary features.
+    Loads models (e.g. google/gemma-3-4b-it) in 4-bit NF4 precision with CPU offloading support.
     """
 
     def __init__(
@@ -22,32 +21,36 @@ class FeatureExplainer:
         load_in_8bit: bool = False,
         torch_dtype: str = "bfloat16",
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        provider: str = "auto",
+        provider: str = "llm",
     ):
         self.model_name = model_name
         self.device = device
         self.provider = provider
         self.pipeline = None
-        if provider != "heuristic":
+        if provider == "llm":
             self._init_local_llm(model_name, load_in_4bit, load_in_8bit, torch_dtype)
 
     def _init_local_llm(self, model_name: str, load_in_4bit: bool, load_in_8bit: bool, torch_dtype: str):
-        logger.info(f"Loading local auto-interpretation LLM: '{model_name}' (4-bit={load_in_4bit}, 8-bit={load_in_8bit})")
+        logger.info(f"Loading local auto-interpretation LLM: '{model_name}' (4-bit NF4 on {self.device})")
         try:
-            dtype = torch.bfloat16 if torch_dtype == "bfloat16" and torch.cuda.is_bf16_supported() else torch.float16
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, padding_side="left")
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
 
             kwargs = {
                 "trust_remote_code": True,
-                "device_map": "auto",
-                "torch_dtype": dtype,
+                "device_map": "auto" if self.device != "cpu" else "cpu",
+                "llm_int8_enable_fp32_cpu_offload": True,
             }
-            if load_in_4bit:
-                kwargs["load_in_4bit"] = True
-            elif load_in_8bit:
-                kwargs["load_in_8bit"] = True
+            if load_in_4bit and self.device != "cpu":
+                kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            else:
+                kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
             model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
             model.eval()
@@ -56,22 +59,23 @@ class FeatureExplainer:
                 "text-generation",
                 model=model,
                 tokenizer=tokenizer,
-                max_new_tokens=60,
-                temperature=0.2,
+                max_new_tokens=40,
+                temperature=0.1,
                 do_sample=False,
+                return_full_text=False,
             )
-            logger.info(f"Local LLM '{model_name}' initialized successfully on {self.device}.")
+            logger.info(f"Local LLM '{model_name}' initialized successfully in 4-bit NF4.")
         except Exception as e:
-            logger.warning(f"Could not load local LLM '{model_name}' ({e}). Falling back to heuristic feature explanation.")
+            logger.warning(f"Could not load local LLM '{model_name}' ({e}). Falling back to heuristic explanation.")
             self.pipeline = None
 
     def _format_snippets(self, snippets: List[ActivatingSnippet]) -> str:
         formatted = []
-        for i, s in enumerate(snippets[:8], 1):
+        for i, s in enumerate(snippets[:6], 1):
             tok_strs = []
             for t in s.tokens:
                 if t.activation_val > 0.1:
-                    tok_strs.append(f"[{t.token_str} | {t.activation_val:.2f}]")
+                    tok_strs.append(f"[{t.token_str}|{t.activation_val:.2f}]")
                 else:
                     tok_strs.append(t.token_str)
             formatted.append(f"{i}. " + "".join(tok_strs))
@@ -98,14 +102,13 @@ class FeatureExplainer:
                     formatted_prompt = f"{EXPLANATION_SYSTEM_PROMPT}\n\n{prompt}\nExplanation:"
 
                 out = self.pipeline(formatted_prompt)
-                gen_text = out[0]["generated_text"]
-                if formatted_prompt in gen_text:
-                    gen_text = gen_text.replace(formatted_prompt, "").strip()
-                return gen_text.split("\n")[0].strip()
+                gen_text = out[0]["generated_text"].strip()
+                first_line = gen_text.split("\n")[0].strip().strip('"').strip("'")
+                return first_line if first_line else gen_text
             except Exception as e:
-                logger.warning(f"Local LLM explanation generation failed: {e}")
+                logger.warning(f"LLM generation failed: {e}")
 
-        # Fast heuristic extraction for offline/unit test execution
+        # Heuristic fallback
         top_toks = set()
         for s in snippets[:5]:
             for t in s.tokens:

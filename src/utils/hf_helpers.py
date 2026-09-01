@@ -81,7 +81,7 @@ def _load_planckgpt_fallback(model_name_or_path: str, dtype: torch.dtype, device
     from huggingface_hub import hf_hub_download
     from src.utils.planck_gpt import PlanckGPT
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = device_map if device_map in ["cpu", "cuda"] else ("cuda" if torch.cuda.is_available() else "cpu")
     model = PlanckGPT(
         vocab_size=50257,
         d_model=896,
