@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from src.utils.hf_helpers import load_model_and_tokenizer, get_unembedding_weights
 from src.architectures.registry import get_dictionary_cls
-from src.core.activation_buffer import ActivationBuffer
+from src.core.hook_manager import HookManager
 from src.auto_interpret.sample_collector import FeatureSampleCollector
 from src.auto_interpret.explainer import FeatureExplainer
 from src.utils.io import save_json
@@ -80,6 +80,17 @@ def process_layer_metadata(
             for idx, val in zip(top_neg_idx[feat_id], top_neg_vals[feat_id])
         ]
 
+        # Convert snippets to clean serializable dicts for Neuronpedia UI
+        serialized_snippets = [
+            {
+                "context_text": s.context_text,
+                "max_activation": float(s.max_activation),
+                "tokens": [{"token": t.token_str, "act": float(t.activation_val)} for t in s.tokens]
+            }
+            for s in snippets[:4]
+        ]
+        max_act = max([s.max_activation for s in snippets] + [0.0])
+
         top_tokens_str = ", ".join([f"'{p['token']}' (+{p['logit']:.1f})" for p in promoted[:3]])
         full_explanation = f"{base_explanation} (Promotes: {top_tokens_str})"
 
@@ -88,6 +99,9 @@ def process_layer_metadata(
             "layer": layer_hook,
             "explanation": full_explanation,
             "snippet_count": len(snippets),
+            "max_activation": float(max_act),
+            "firing_rate": float(len(snippets) / max(1, 10)),
+            "snippets": serialized_snippets,
             "top_promoted_tokens": promoted,
             "top_suppressed_tokens": suppressed,
         }
@@ -142,6 +156,19 @@ def main():
         except Exception:
             full_metadata_catalog = {}
 
+    sample_dataset_texts = [
+        "The Eiffel Tower in Paris, France stands on the Champ de Mars near the Seine river.",
+        "Quantum mechanics reveals that particles exist in probabilistic superposition wavefunctions.",
+        "In deep learning, transformer self-attention enables global contextual token representations.",
+        "def quicksort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [x for x in arr if x == pivot] + quicksort([x for x in arr if x > pivot])",
+        "The Supreme Court declared the federal law unconstitutional under the Fourteenth Amendment.",
+        "Photosynthesis converts carbon dioxide and sunlight into glucose and oxygen molecules in chloroplasts.",
+        "The economic inflation rate rose sharply due to supply chain bottlenecks and monetary policy changes.",
+        "John and Mary went to the store, John gave a drink to Mary because she was thirsty.",
+        "The capital of Germany is Berlin, the capital of Japan is Tokyo, and the capital of Italy is Rome.",
+        "Machine learning algorithms optimize loss functions using stochastic gradient descent and backpropagation."
+    ]
+
     print(f"🚀 Starting Auto-Interpretation across {len(layer_map)} layer(s)...")
     for layer_idx, (hook_point, layer_subpath) in enumerate(layer_map.items(), 1):
         print(f"\n[{layer_idx}/{len(layer_map)}] Processing layer '{hook_point}' from {layer_subpath}...")
@@ -155,28 +182,20 @@ def main():
 
         collector = FeatureSampleCollector(dictionary_model=dict_model, tokenizer=tokenizer)
         
-        # Sample activation buffer for token snippets (sample subset to keep execution ultra-fast)
-        num_sample_feats = min(200, dict_model.d_sae)
-        buffer = ActivationBuffer(
-            model=model,
-            tokenizer=tokenizer,
-            hook_points=[hook_point],
-            batch_size=512,
-            buffer_size=2048,
-            context_length=128,
-            device=device,
-        )
-
-        for step in range(3):
-            sample_batch = buffer.next_batch()
-            if isinstance(sample_batch, (tuple, list)):
-                sample_batch = sample_batch[0]
-            dummy_ids = torch.arange(sample_batch.shape[0], device=device) % tokenizer.vocab_size
-            collector.process_sequence_activations(
-                input_ids=dummy_ids,
-                activations=sample_batch,
-                target_features=list(range(num_sample_feats))
-            )
+        # Stream real text activations across sample passages
+        hook_mgr = HookManager(model)
+        hook_mgr.register_forward_hooks([hook_point])
+        
+        with torch.no_grad():
+            for sample_text in sample_dataset_texts:
+                inp = tokenizer(sample_text, return_tensors="pt").to(device)
+                _ = model(**inp)
+                seq_act = hook_mgr.activations[hook_point][0]
+                collector.process_sequence_activations(
+                    input_ids=inp["input_ids"][0],
+                    activations=seq_act,
+                )
+        hook_mgr.remove_hooks()
 
         layer_meta = process_layer_metadata(
             layer_hook=hook_point,

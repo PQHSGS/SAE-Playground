@@ -53,7 +53,9 @@ class FeatureSampleCollector:
         """
         Processes a single tokenized sequence and updates top-activating snippet records.
         """
-        f = self.dictionary_model.encode(activations)  # (seq_len, d_sae)
+        scale = (self.dictionary_model.d_in ** 0.5) / (activations.norm(dim=-1, keepdim=True) + 1e-8)
+        normed_act = (activations * scale).to(device=self.dictionary_model.get_decoder_weights().device, dtype=self.dictionary_model.get_decoder_weights().dtype)
+        f = self.dictionary_model.encode(normed_act)  # (seq_len, d_sae)
         features_to_check = target_features or list(range(f.shape[-1]))
 
         seq_len = input_ids.shape[0]
