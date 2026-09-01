@@ -1,6 +1,7 @@
 let currentSelectedFeature = 0;
 let currentActiveLayer = "";
 let analyzedTokensData = [];
+const featureDetailsCache = new Map();
 
 function escapeHtml(str) {
   if (!str) return "";
@@ -76,7 +77,7 @@ function initSearch() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       loadFeatures(e.target.value);
-    }, 300);
+    }, 200);
   });
 }
 
@@ -84,7 +85,7 @@ async function loadFeatures(searchQuery = "") {
   const listEl = document.getElementById("feature-list");
   listEl.innerHTML = '<div class="loading">Loading feature catalog...</div>';
   try {
-    let url = `/api/features?page=1&page_size=100&layer=${encodeURIComponent(currentActiveLayer)}`;
+    let url = `/api/features?page=1&page_size=50&layer=${encodeURIComponent(currentActiveLayer)}`;
     if (searchQuery) {
       url += `&search=${encodeURIComponent(searchQuery)}`;
     }
@@ -99,6 +100,7 @@ async function loadFeatures(searchQuery = "") {
       return;
     }
 
+    const fragment = document.createDocumentFragment();
     data.features.forEach((feat, idx) => {
       const item = document.createElement("div");
       item.className = `feature-item ${idx === 0 ? "active" : ""}`;
@@ -117,8 +119,9 @@ async function loadFeatures(searchQuery = "") {
         item.classList.add("active");
         selectFeature(feat.feature_id);
       });
-      listEl.appendChild(item);
+      fragment.appendChild(item);
     });
+    listEl.appendChild(fragment);
 
     if (data.features.length > 0) {
       selectFeature(data.features[0].feature_id);
@@ -150,20 +153,29 @@ async function selectFeature(featureId) {
     }
   });
 
-  // Fetch Full Feature Details (Neuronpedia Context Snippets + Logits)
-  try {
-    const res = await fetch(`/api/feature/${featureId}?top_k=10&layer=${encodeURIComponent(currentActiveLayer)}`);
-    if (!res.ok) return;
-    const data = await res.json();
+  const cacheKey = `${currentActiveLayer}_${featureId}`;
+  let data = featureDetailsCache.get(cacheKey);
 
-    if (titleEl) {
-      titleEl.innerText = (data.title && data.title !== `Feature #${featureId}`) 
-        ? `${data.title} (#${featureId})` 
-        : `Feature #${featureId}`;
+  if (!data) {
+    try {
+      const res = await fetch(`/api/feature/${featureId}?top_k=10&layer=${encodeURIComponent(currentActiveLayer)}`);
+      if (!res.ok) return;
+      data = await res.json();
+      featureDetailsCache.set(cacheKey, data);
+    } catch (err) {
+      console.error("Failed to load feature details:", err);
+      return;
     }
-    if (expEl) expEl.innerText = data.explanation || `Feature #${featureId}`;
-    if (maxActEl) maxActEl.innerText = `+${data.max_activation.toFixed(2)}`;
-    if (firingRateEl) firingRateEl.innerText = `${(data.firing_rate * 100).toFixed(3)}%`;
+  }
+
+  if (titleEl) {
+    titleEl.innerText = (data.title && data.title !== `Feature #${featureId}`) 
+      ? `${data.title} (#${featureId})` 
+      : `Feature #${featureId}`;
+  }
+  if (expEl) expEl.innerText = data.explanation || `Feature #${featureId}`;
+  if (maxActEl) maxActEl.innerText = `+${data.max_activation.toFixed(2)}`;
+  if (firingRateEl) firingRateEl.innerText = `${(data.firing_rate * 100).toFixed(3)}%`;
 
     // 1. Render Feature 1: Top Activating Context Snippets (Neuronpedia Core)
     const snippetsContainer = document.getElementById("snippets-container");

@@ -68,12 +68,12 @@ def get_feature_meta(target_layer: str, feature_id: int) -> Dict:
 
 def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, feature_id: int) -> List[Dict]:
     """Computes or retrieves top activating context snippets with token-level activation values."""
-    if state.model is None or state.tokenizer is None:
-        return []
-
     meta = get_feature_meta(target_layer, feature_id)
     if "snippets" in meta and meta["snippets"]:
         return meta["snippets"]
+
+    if state.model is None or state.tokenizer is None:
+        return []
 
     snippets = []
     device = state.model.device if hasattr(state.model, "device") else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -105,9 +105,10 @@ def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, 
             })
 
     hook_mgr.remove_hooks()
-    # Sort snippets by max activation descending
     snippets.sort(key=lambda s: s["max_activation"], reverse=True)
-    return snippets[:4]
+    top_snippets = snippets[:4]
+    meta["snippets"] = top_snippets  # Cache for future instant lookups
+    return top_snippets
 
 
 async def health_handler(request: web.Request) -> web.Response:
@@ -140,7 +141,7 @@ async def select_layer_handler(request: web.Request) -> web.Response:
 
 async def features_handler(request: web.Request) -> web.Response:
     page = int(request.query.get("page", 1))
-    page_size = int(request.query.get("page_size", 50))
+    page_size = int(request.query.get("page_size", 40))
     search = request.query.get("search", None)
     target_layer = request.query.get("layer") or state.active_hook_point
 
@@ -192,23 +193,30 @@ async def feature_details_handler(request: web.Request) -> web.Response:
     top_k = int(request.query.get("top_k", 10))
     target_layer = request.query.get("layer") or state.active_hook_point
 
+    meta = get_feature_meta(target_layer, feature_id)
+    promoted = meta.get("top_promoted_tokens")
+    suppressed = meta.get("top_suppressed_tokens")
+
     dict_model = get_or_load_dictionary(target_layer)
     if dict_model is None:
         return web.json_response({"error": f"Layer '{target_layer}' not loaded."}, status=400)
 
-    w_dec = dict_model.get_decoder_weights()
-    if feature_id >= w_dec.shape[0]:
-        return web.json_response({"error": "Feature ID out of bounds."}, status=404)
+    # Fast path: Use precomputed attribution if available
+    if not promoted or not suppressed:
+        w_dec = dict_model.get_decoder_weights()
+        if feature_id >= w_dec.shape[0]:
+            return web.json_response({"error": "Feature ID out of bounds."}, status=404)
 
-    promoted, suppressed = compute_direct_logit_attribution(
-        decoder_vector=w_dec[feature_id],
-        unembedding_weights=state.unembedding_weights,
-        tokenizer=state.tokenizer,
-        top_k=top_k,
-    )
-    meta = get_feature_meta(target_layer, feature_id)
+        promoted, suppressed = compute_direct_logit_attribution(
+            decoder_vector=w_dec[feature_id],
+            unembedding_weights=state.unembedding_weights,
+            tokenizer=state.tokenizer,
+            top_k=top_k,
+        )
+        meta["top_promoted_tokens"] = promoted
+        meta["top_suppressed_tokens"] = suppressed
+
     snippets = get_top_activating_snippets(dict_model, target_layer, feature_id)
-
     max_act = meta.get("max_activation", max([s["max_activation"] for s in snippets] + [0.0]))
     firing_rate = meta.get("firing_rate", 0.001)
 
