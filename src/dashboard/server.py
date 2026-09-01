@@ -292,7 +292,6 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
     hook_mgr.remove_hooks()
     token_ids = inputs["input_ids"][0].tolist()
     seq_len = len(token_ids)
-    layer_meta = state.feature_metadata.get(target_layer, {})
 
     token_analysis = []
     for pos in range(seq_len):
