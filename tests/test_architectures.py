@@ -5,7 +5,7 @@ from src.architectures.registry import build_dictionary
 
 
 @pytest.mark.parametrize("arch", [
-    "standard", "topk", "batch_topk", "jumprelu", "gated", "treesae", "sasa", "matryoshka", "matching_pursuit"
+    "standard", "topk", "batch_topk", "jumprelu", "gated", "treesae", "sasa", "spherical_tree_sasa", "matryoshka", "matching_pursuit"
 ])
 def test_sae_forward_backward(arch):
     d_in = 64

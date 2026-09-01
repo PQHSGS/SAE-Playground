@@ -37,7 +37,8 @@ flowchart TD
     BaseSAE --> MatryoshkaSAE["MatryoshkaSAE (Multi-Prefix)"]
     BaseSAE --> MatchingPursuitSAE["MatchingPursuitSAE (Tied OMP)"]
     BaseSAE --> TreeSAE["TreeSAE (Hierarchical)"]
-    BaseSAE --> SASA["SASA (Adaptive k)"]
+    BaseSAE --> SASA["SASA (Subspace Adaptive k)"]
+    BaseSAE --> SphericalTreeSASA["SphericalTreeSASA (Hyperspherical Subspace Tree)"]
     
     BaseTranscoder --> StandardTranscoder["StandardTranscoder"]
     BaseTranscoder --> SkipTranscoder["SkipTranscoder (Linear Bypass)"]
