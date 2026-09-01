@@ -133,16 +133,6 @@ async function loadFeatures(searchQuery = "") {
 
 async function selectFeature(featureId) {
   currentSelectedFeature = featureId;
-  const titleEl = document.getElementById("inspect-title");
-  const expEl = document.getElementById("inspect-explanation");
-  const layerBadge = document.getElementById("hero-layer-badge");
-  const maxActEl = document.getElementById("stat-max-act");
-  const firingRateEl = document.getElementById("stat-firing-rate");
-  const steerFeatInput = document.getElementById("steer-feat-id");
-
-  if (titleEl) titleEl.innerText = `Feature #${featureId}`;
-  if (layerBadge) layerBadge.innerText = currentActiveLayer;
-  if (steerFeatInput) steerFeatInput.value = featureId;
 
   // Highlight in left sidebar
   document.querySelectorAll(".feature-item").forEach(item => {
@@ -168,78 +158,90 @@ async function selectFeature(featureId) {
     }
   }
 
-  if (titleEl) {
-    titleEl.innerText = (data.title && data.title !== `Feature #${featureId}`) 
-      ? `${data.title} (#${featureId})` 
-      : `Feature #${featureId}`;
-  }
+  // Unified Tab 1 Renderers
+  renderHeroCard(data, featureId);
+  renderContextSnippets(data.snippets);
+  renderLogitAttributionList("promoted-list", data.promoted_tokens, true);
+  renderLogitAttributionList("suppressed-list", data.suppressed_tokens, false);
+}
+
+function renderHeroCard(data, featureId) {
+  const titleEl = document.getElementById("inspect-title");
+  const expEl = document.getElementById("inspect-explanation");
+  const layerBadge = document.getElementById("hero-layer-badge");
+  const maxActEl = document.getElementById("stat-max-act");
+  const firingRateEl = document.getElementById("stat-firing-rate");
+  const steerFeatInput = document.getElementById("steer-feat-id");
+
+  if (layerBadge) layerBadge.innerText = currentActiveLayer;
+  if (steerFeatInput) steerFeatInput.value = featureId;
+
+  const displayTitle = (data.title && data.title !== `Feature #${featureId}`)
+    ? `${data.title} (#${featureId})`
+    : `Feature #${featureId}`;
+
+  if (titleEl) titleEl.innerText = displayTitle;
   if (expEl) expEl.innerText = data.explanation || `Feature #${featureId}`;
   if (maxActEl) maxActEl.innerText = `+${data.max_activation.toFixed(2)}`;
   if (firingRateEl) firingRateEl.innerText = `${(data.firing_rate * 100).toFixed(3)}%`;
+}
 
-    // 1. Render Feature 1: Top Activating Context Snippets (Neuronpedia Core)
-    const snippetsContainer = document.getElementById("snippets-container");
-    if (snippetsContainer) {
-      if (!data.snippets || data.snippets.length === 0) {
-        snippetsContainer.innerHTML = '<div class="empty-msg">No activating dataset examples recorded for this feature.</div>';
-      } else {
-        snippetsContainer.innerHTML = data.snippets.map((snip, sIdx) => {
-          const maxSnippetAct = Math.max(...snip.tokens.map(t => t.act), 1e-5);
-          const tokenSpans = snip.tokens.map(t => {
-            const intensity = Math.min(1.0, Math.max(0.0, t.act / maxSnippetAct));
-            const isPeak = t.act >= maxSnippetAct * 0.95 && t.act > 0.1;
-            const bg = intensity > 0.05 ? `rgba(139, 92, 246, ${Math.max(0.2, intensity * 0.9)})` : 'transparent';
-            const color = intensity > 0.3 ? '#ffffff' : '#cbd5e1';
-            const peakClass = isPeak ? 'peak-token' : '';
-            return `<span class="token-pill ${peakClass}" style="background:${bg}; color:${color};" title="act: ${t.act.toFixed(3)}">${t.token}</span>`;
-          }).join("");
+function renderContextSnippets(snippets) {
+  const container = document.getElementById("snippets-container");
+  if (!container) return;
 
-          return `
-            <div class="snippet-card">
-              <div class="snippet-meta">
-                <span style="color:#94a3b8; font-weight:600;">Example #${sIdx + 1}</span>
-                <span class="max-act-badge">Max Act: +${snip.max_activation.toFixed(2)}</span>
-              </div>
-              <div class="snippet-text-box">${tokenSpans}</div>
-            </div>
-          `;
-        }).join("");
-      }
-    }
-
-    // 2. Render Feature 2: Direct Logit Attribution (Logit Lens)
-    const promList = document.getElementById("promoted-list");
-    if (promList) {
-      const maxProm = data.promoted_tokens.length > 0 ? Math.max(...data.promoted_tokens.map(t => t.logit), 1e-5) : 1;
-      promList.innerHTML = data.promoted_tokens.map(t => {
-        const widthPct = Math.min(100, Math.max(5, (t.logit / maxProm) * 100));
-        return `
-          <div class="token-row">
-            <div class="logit-bar-pos" style="width: ${widthPct}%;"></div>
-            <span class="token-str">"${t.token}"</span>
-            <span class="token-pos">+${t.logit.toFixed(3)}</span>
-          </div>
-        `;
-      }).join("");
-    }
-
-    const suppList = document.getElementById("suppressed-list");
-    if (suppList) {
-      const maxSupp = data.suppressed_tokens.length > 0 ? Math.max(...data.suppressed_tokens.map(t => Math.abs(t.logit)), 1e-5) : 1;
-      suppList.innerHTML = data.suppressed_tokens.map(t => {
-        const widthPct = Math.min(100, Math.max(5, (Math.abs(t.logit) / maxSupp) * 100));
-        return `
-          <div class="token-row">
-            <div class="logit-bar-neg" style="width: ${widthPct}%;"></div>
-            <span class="token-str">"${t.token}"</span>
-            <span class="token-neg">${t.logit.toFixed(3)}</span>
-          </div>
-        `;
-      }).join("");
-    }
-  } catch (err) {
-    console.error("Failed to load feature details:", err);
+  if (!snippets || snippets.length === 0) {
+    container.innerHTML = '<div class="empty-msg">No activating dataset examples recorded for this feature.</div>';
+    return;
   }
+
+  container.innerHTML = snippets.map((snip, sIdx) => {
+    const maxSnippetAct = Math.max(...snip.tokens.map(t => t.act), 1e-5);
+    const tokenSpans = snip.tokens.map(t => {
+      const intensity = Math.min(1.0, Math.max(0.0, t.act / maxSnippetAct));
+      const isPeak = t.act >= maxSnippetAct * 0.95 && t.act > 0.1;
+      const bg = intensity > 0.05 ? `rgba(139, 92, 246, ${Math.max(0.2, intensity * 0.9)})` : 'transparent';
+      const color = intensity > 0.3 ? '#ffffff' : '#cbd5e1';
+      const peakClass = isPeak ? 'peak-token' : '';
+      return `<span class="token-pill ${peakClass}" style="background:${bg}; color:${color};" title="Activation: +${t.act.toFixed(3)}">${escapeHtml(t.token)}</span>`;
+    }).join("");
+
+    return `
+      <div class="snippet-card">
+        <div class="snippet-meta">
+          <span style="color:#94a3b8; font-weight:600;">Example #${sIdx + 1}</span>
+          <span class="max-act-badge">Max Act: +${snip.max_activation.toFixed(2)}</span>
+        </div>
+        <div class="snippet-text-box">${tokenSpans}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderLogitAttributionList(containerId, tokens, isPositive) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (!tokens || tokens.length === 0) {
+    container.innerHTML = '<div class="empty-msg">No logit attributions recorded.</div>';
+    return;
+  }
+
+  const maxVal = Math.max(...tokens.map(t => Math.abs(t.logit)), 1e-5);
+  const barClass = isPositive ? "logit-bar-pos" : "logit-bar-neg";
+  const valClass = isPositive ? "token-pos" : "token-neg";
+  const sign = isPositive ? "+" : "";
+
+  container.innerHTML = tokens.map(t => {
+    const widthPct = Math.min(100, Math.max(5, (Math.abs(t.logit) / maxVal) * 100));
+    return `
+      <div class="token-row">
+        <div class="${barClass}" style="width: ${widthPct}%;"></div>
+        <span class="token-str">"${escapeHtml(t.token)}"</span>
+        <span class="${valClass}">${sign}${t.logit.toFixed(3)}</span>
+      </div>
+    `;
+  }).join("");
 }
 
 function initSteeringControls() {
@@ -447,4 +449,8 @@ window.jumpToFeature = function(featureId) {
     }
   });
   selectFeature(featureId);
+  const heroCard = document.querySelector(".hero-card");
+  if (heroCard) {
+    heroCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 };
