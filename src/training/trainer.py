@@ -199,6 +199,7 @@ class DictionaryTrainer:
         metrics["loss/total"] = scale_invariant_loss
         metrics["metrics/mean_nmse"] = mean_nmse
         metrics["metrics/mean_l0"] = sum(l0_vals) / max(1, len(l0_vals)) if l0_vals else 0.0
+        metrics["metrics/mean_dead_pct"] = sum(dead_vals) / max(1, len(dead_vals)) if dead_vals else 0.0
         metrics["metrics/max_dead_pct"] = max(dead_vals) if dead_vals else 0.0
         metrics["metrics/tokens_processed"] = self.total_tokens_trained
         metrics["metrics/lr"] = self.scheduler.get_last_lr()[0]
@@ -220,7 +221,7 @@ class DictionaryTrainer:
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("NMSE: {task.fields[nmse]:.4f} | L0: {task.fields[l0]:.1f} | Dead: {task.fields[dead]:.1f}%"),
+            TextColumn("NMSE: {task.fields[nmse]:.4f} | L0: {task.fields[l0]:.1f} | Mean Dead: {task.fields[dead]:.1f}%"),
             TimeRemainingColumn(),
             console=self.console,
         ) as progress:
@@ -247,7 +248,7 @@ class DictionaryTrainer:
                     advance=1,
                     nmse=running_nmse,
                     l0=metrics.get("metrics/mean_l0", 0.0),
-                    dead=metrics.get("metrics/max_dead_pct", 0.0),
+                    dead=metrics.get("metrics/mean_dead_pct", 0.0),
                 )
 
                 if step % self.config.checkpoint_steps == 0 or step == self.config.total_steps:
