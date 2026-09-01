@@ -21,16 +21,37 @@ class DashboardState:
     feature_metadata: Dict[str, Dict[int, Dict]] = {}  # {hook_point: {feat_id: meta}}
 
     @property
-    def dictionary_model(self):
-        if self.active_hook_point in self.loaded_dictionaries:
-            return self.loaded_dictionaries[self.active_hook_point]
-        return None
+    def dictionary_model(self) -> Optional[torch.nn.Module]:
+        return self.loaded_dictionaries.get(self.active_hook_point)
 
 
 state = DashboardState()
 
 
-async def health_handler(request):
+def get_or_load_dictionary(layer: str) -> Optional[torch.nn.Module]:
+    """Lazy-loads and caches the dictionary module for a requested hook point."""
+    if layer in state.loaded_dictionaries:
+        return state.loaded_dictionaries[layer]
+
+    if layer not in state.available_layers:
+        return None
+
+    subfolder = state.available_layers[layer]
+    cfg_path = os.path.join(subfolder, "config.json")
+    if not os.path.exists(cfg_path):
+        return None
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dict_model = cls.from_pretrained(subfolder, device=device)
+    state.loaded_dictionaries[layer] = dict_model
+    return dict_model
+
+
+async def health_handler(request: web.Request) -> web.Response:
     return web.json_response({
         "status": "online",
         "model_loaded": state.model is not None,
@@ -40,68 +61,43 @@ async def health_handler(request):
     })
 
 
-async def layers_handler(request):
+async def layers_handler(request: web.Request) -> web.Response:
     return web.json_response({
         "active_layer": state.active_hook_point,
         "layers": list(state.available_layers.keys()),
     })
 
 
-async def select_layer_handler(request):
+async def select_layer_handler(request: web.Request) -> web.Response:
     data = await request.json()
     hook_point = data.get("hook_point")
-    if hook_point not in state.available_layers:
-        return web.json_response({"error": f"Layer '{hook_point}' not found in available checkpoints."}, status=404)
-
-    # Lazy-load layer dictionary into cache
-    if hook_point not in state.loaded_dictionaries:
-        subfolder = state.available_layers[hook_point]
-        cfg_path = os.path.join(subfolder, "config.json")
-        if not os.path.exists(cfg_path):
-            return web.json_response({"error": f"config.json missing in {subfolder}"}, status=500)
-        
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        state.loaded_dictionaries[hook_point] = cls.from_pretrained(subfolder, device=device)
+    dict_model = get_or_load_dictionary(hook_point)
+    if dict_model is None:
+        return web.json_response({"error": f"Layer '{hook_point}' not found in checkpoints."}, status=404)
 
     state.active_hook_point = hook_point
     return web.json_response({"status": "success", "active_layer": state.active_hook_point})
 
 
-async def features_handler(request):
+async def features_handler(request: web.Request) -> web.Response:
     page = int(request.query.get("page", 1))
     page_size = int(request.query.get("page_size", 50))
     search = request.query.get("search", None)
     target_layer = request.query.get("layer") or state.active_hook_point
 
-    if not target_layer or target_layer not in state.available_layers:
-        return web.json_response({"error": "No active layer selected."}, status=400)
+    dict_model = get_or_load_dictionary(target_layer)
+    if dict_model is None:
+        return web.json_response({"error": f"Layer '{target_layer}' is not available."}, status=400)
 
-    # Ensure dictionary is loaded
-    if target_layer not in state.loaded_dictionaries:
-        subfolder = state.available_layers[target_layer]
-        cfg_path = os.path.join(subfolder, "config.json")
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        state.loaded_dictionaries[target_layer] = cls.from_pretrained(subfolder, device=device)
-
-    dict_model = state.loaded_dictionaries[target_layer]
     total_features = dict_model.d_sae
     layer_meta = state.feature_metadata.get(target_layer, {})
 
     if search:
         search_lower = search.lower()
-        matching_indices = []
-        for idx in range(total_features):
-            meta = layer_meta.get(idx, {})
-            exp = meta.get("explanation", f"Feature #{idx}")
-            if search_lower in exp.lower() or str(idx) == search_lower:
-                matching_indices.append(idx)
-        
+        matching_indices = [
+            idx for idx in range(total_features)
+            if search_lower in layer_meta.get(idx, {}).get("explanation", f"Feature #{idx}").lower() or str(idx) == search_lower
+        ]
         total_features = len(matching_indices)
         start_idx = (page - 1) * page_size
         end_idx = min(start_idx + page_size, total_features)
@@ -111,16 +107,16 @@ async def features_handler(request):
         end_idx = min(start_idx + page_size, total_features)
         page_indices = list(range(start_idx, end_idx))
 
-    features = []
-    for idx in page_indices:
-        meta = layer_meta.get(idx, {})
-        features.append({
+    features = [
+        {
             "feature_id": idx,
-            "explanation": meta.get("explanation", f"Feature #{idx}"),
-            "l0_firing_rate": meta.get("firing_rate", 0.0),
-            "max_activation": meta.get("max_activation", 0.0),
-            "top_promoted_tokens": meta.get("top_promoted_tokens", []),
-        })
+            "explanation": layer_meta.get(idx, {}).get("explanation", f"Feature #{idx}"),
+            "l0_firing_rate": layer_meta.get(idx, {}).get("firing_rate", 0.0),
+            "max_activation": layer_meta.get(idx, {}).get("max_activation", 0.0),
+            "top_promoted_tokens": layer_meta.get(idx, {}).get("top_promoted_tokens", []),
+        }
+        for idx in page_indices
+    ]
 
     return web.json_response({
         "layer": target_layer,
@@ -131,29 +127,21 @@ async def features_handler(request):
     })
 
 
-async def feature_logits_handler(request):
+async def feature_logits_handler(request: web.Request) -> web.Response:
     feature_id = int(request.match_info["feature_id"])
     top_k = int(request.query.get("top_k", 10))
     target_layer = request.query.get("layer") or state.active_hook_point
 
-    if not target_layer or target_layer not in state.loaded_dictionaries:
-        if target_layer in state.available_layers:
-            subfolder = state.available_layers[target_layer]
-            with open(os.path.join(subfolder, "config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-            state.loaded_dictionaries[target_layer] = cls.from_pretrained(subfolder, device="cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            return web.json_response({"error": "Dictionary model not loaded."}, status=400)
+    dict_model = get_or_load_dictionary(target_layer)
+    if dict_model is None:
+        return web.json_response({"error": f"Layer '{target_layer}' not loaded."}, status=400)
 
-    dict_model = state.loaded_dictionaries[target_layer]
     w_dec = dict_model.get_decoder_weights()
     if feature_id >= w_dec.shape[0]:
         return web.json_response({"error": "Feature ID out of bounds."}, status=404)
 
-    d_v = w_dec[feature_id]
     promoted, suppressed = compute_direct_logit_attribution(
-        decoder_vector=d_v,
+        decoder_vector=w_dec[feature_id],
         unembedding_weights=state.unembedding_weights,
         tokenizer=state.tokenizer,
         top_k=top_k,
@@ -168,7 +156,7 @@ async def feature_logits_handler(request):
     })
 
 
-async def steer_handler(request):
+async def steer_handler(request: web.Request) -> web.Response:
     if state.model is None or state.tokenizer is None:
         return web.json_response({"error": "Base model not loaded."}, status=400)
 
@@ -179,17 +167,10 @@ async def steer_handler(request):
     temperature = float(data.get("temperature", 0.7))
     target_layer = data.get("layer") or state.active_hook_point
 
-    if target_layer not in state.loaded_dictionaries:
-        if target_layer in state.available_layers:
-            subfolder = state.available_layers[target_layer]
-            with open(os.path.join(subfolder, "config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-            state.loaded_dictionaries[target_layer] = cls.from_pretrained(subfolder, device="cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            return web.json_response({"error": "Dictionary not loaded for steering."}, status=400)
+    dict_model = get_or_load_dictionary(target_layer)
+    if dict_model is None:
+        return web.json_response({"error": f"Layer '{target_layer}' not loaded for steering."}, status=400)
 
-    dict_model = state.loaded_dictionaries[target_layer]
     steering_engine = FeatureSteeringEngine(
         model=state.model,
         tokenizer=state.tokenizer,
@@ -203,10 +184,15 @@ async def steer_handler(request):
         max_new_tokens=max_new_tokens,
         temperature=temperature,
     )
-    return web.json_response({"prompt": prompt, "generated_text": generated, "steered_features": steered_features, "layer": target_layer})
+    return web.json_response({
+        "prompt": prompt,
+        "generated_text": generated,
+        "steered_features": steered_features,
+        "layer": target_layer
+    })
 
 
-async def analyze_text_handler(request):
+async def analyze_text_handler(request: web.Request) -> web.Response:
     if state.model is None or state.tokenizer is None:
         return web.json_response({"error": "Base model not loaded."}, status=400)
 
@@ -215,18 +201,12 @@ async def analyze_text_handler(request):
     top_k_features = int(data.get("top_k_features", 8))
     target_layer = data.get("layer") or state.active_hook_point
 
-    if target_layer not in state.loaded_dictionaries:
-        if target_layer in state.available_layers:
-            subfolder = state.available_layers[target_layer]
-            with open(os.path.join(subfolder, "config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
-            state.loaded_dictionaries[target_layer] = cls.from_pretrained(subfolder, device="cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            return web.json_response({"error": "Dictionary not loaded."}, status=400)
+    dict_model = get_or_load_dictionary(target_layer)
+    if dict_model is None:
+        return web.json_response({"error": f"Layer '{target_layer}' is not available."}, status=400)
 
-    dict_model = state.loaded_dictionaries[target_layer]
-    inputs = state.tokenizer(text, return_tensors="pt").to(state.model.device)
+    device = state.model.device if hasattr(state.model, "device") else ("cuda" if torch.cuda.is_available() else "cpu")
+    inputs = state.tokenizer(text, return_tensors="pt").to(device)
     hook_mgr = HookManager(state.model)
     hook_mgr.register_forward_hooks([target_layer])
 
@@ -239,7 +219,7 @@ async def analyze_text_handler(request):
     tokens = [state.tokenizer.decode([tid]) for tid in inputs["input_ids"][0]]
 
     mean_acts = f.mean(dim=0)
-    top_vals, top_indices = torch.topk(mean_acts, k=min(top_k_features, f.shape[-1]))
+    _, top_indices = torch.topk(mean_acts, k=min(top_k_features, f.shape[-1]))
 
     token_heatmaps = []
     layer_meta = state.feature_metadata.get(target_layer, {})
@@ -264,13 +244,12 @@ def create_app() -> web.Application:
     app.router.add_get("/api/features", features_handler)
     app.router.add_get("/api/feature/{feature_id}/logits", feature_logits_handler)
     app.router.add_post("/api/steer", steer_handler)
-    app.router.add_post("/api/analyze_text", analyze_text_handler)
     app.router.add_post("/api/analyze", analyze_text_handler)
+    app.router.add_post("/api/analyze_text", analyze_text_handler)
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.exists(static_dir):
-        # Serve index.html at root
-        async def index_handler(request):
+        async def index_handler(request: web.Request) -> web.FileResponse:
             return web.FileResponse(os.path.join(static_dir, "index.html"))
         app.router.add_get("/", index_handler)
         app.router.add_static("/", path=static_dir, name="static")
