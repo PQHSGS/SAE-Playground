@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 import yaml
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.utils.hf_helpers import load_model_and_tokenizer
 from src.architectures.registry import get_dictionary_cls
 from src.circuits.steering import FeatureSteeringEngine
+from src.core.multi_dictionary import MultiLayerDictionary
 
 
 def load_yaml(path: str) -> dict:
@@ -60,14 +62,12 @@ def main():
         raise ValueError(f"Checkpoint directory '{checkpoint_dir}' does not exist. Specify --config or --checkpoint_dir.")
 
     model, tokenizer = load_model_and_tokenizer(model_name, device_map="auto")
-    
-    import json
+
     if os.path.exists(os.path.join(checkpoint_dir, "multi_sae_config.json")):
-        from src.core.multi_dictionary import MultiLayerDictionary
         multi_dict = MultiLayerDictionary.from_pretrained(checkpoint_dir, device=device)
         dict_model = multi_dict.get_dictionary(hook_point)
     else:
-        with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
+        with open(os.path.join(checkpoint_dir, "config.json"), "r", encoding="utf-8") as f:
             cfg = json.load(f)
         cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
         dict_model = cls.from_pretrained(checkpoint_dir, device=device)
