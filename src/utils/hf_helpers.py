@@ -1,4 +1,3 @@
-import os
 from typing import Tuple, List, Dict
 import torch
 import torch.nn as nn
