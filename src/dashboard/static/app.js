@@ -378,21 +378,29 @@ function renderTokenActiveFeatures(tokenIdx) {
     featuresHtml = tok.top_features.map(f => {
       const barWidth = Math.min(100, Math.max(5, (f.activation / maxTokenAct) * 100));
       const labelText = f.explanation || `Feature #${f.feature_id}`;
+      const promotedBadges = (f.top_promoted_tokens && f.top_promoted_tokens.length > 0)
+        ? `<div style="margin-top:7px; font-size:11.5px; color:#94a3b8; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+             <span style="font-weight:600; color:#64748b;">Promotes:</span>
+             ${f.top_promoted_tokens.slice(0, 3).map(p => `<span style="background:rgba(16, 185, 129, 0.15); color:#34d399; border:1px solid rgba(16, 185, 129, 0.3); padding:1px 6px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:600;">"${p.token}" (+${p.logit.toFixed(2)})</span>`).join("")}
+           </div>`
+        : "";
+
       return `
-        <div class="snippet-card" style="margin-bottom:10px; border-left: 3px solid #8b5cf6;">
-          <div style="margin-bottom:8px;">
-            <span class="label-pill-bright" title="${escapeHtml(labelText)}">${escapeHtml(labelText)}</span>
+        <div class="snippet-card" style="margin-bottom:10px; border-left: 3px solid #8b5cf6; padding:12px 14px;">
+          <div style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span class="label-pill-bright" style="white-space:normal; font-size:12.5px; line-height:1.4;" title="${escapeHtml(labelText)}">🏷️ ${escapeHtml(labelText)}</span>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#93c5fd;">Feature #${f.feature_id}</span>
-              <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#a78bfa; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 7px; cursor:pointer; font-weight:600;">Inspect Details ↗</button>
+              <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#a78bfa; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 7px; cursor:pointer; font-weight:600;">Inspect Full Details ↗</button>
             </div>
             <span class="max-act-badge">Act: +${f.activation.toFixed(3)}</span>
           </div>
-          <div style="height:4px; background:#070a12; border-radius:2px; overflow:hidden;">
+          <div style="height:4px; background:#070a12; border-radius:2px; overflow:hidden; margin-bottom:4px;">
             <div style="height:100%; width:${barWidth}%; background:linear-gradient(90deg, #8b5cf6, #ec4899); border-radius:2px;"></div>
           </div>
+          ${promotedBadges}
         </div>
       `;
     }).join("");

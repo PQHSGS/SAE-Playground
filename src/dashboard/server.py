@@ -309,11 +309,14 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
         for val, feat_idx in zip(top_vals.tolist(), top_indices.tolist()):
             if val <= 1e-4:
                 continue
-            exp = get_feature_meta(target_layer, feat_idx).get("explanation", f"Feature #{feat_idx}")
+            fmeta = get_feature_meta(target_layer, feat_idx)
+            exp = fmeta.get("explanation", f"Feature #{feat_idx}")
+            promoted = fmeta.get("top_promoted_tokens", [])
             token_top_features.append({
                 "feature_id": int(feat_idx),
                 "activation": float(val),
                 "explanation": exp,
+                "top_promoted_tokens": promoted,
             })
 
         token_analysis.append({
