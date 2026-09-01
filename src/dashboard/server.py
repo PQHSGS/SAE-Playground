@@ -252,12 +252,16 @@ async def steer_handler(request: web.Request) -> web.Response:
 
 
 async def analyze_text_handler(request: web.Request) -> web.Response:
+    """
+    Neuronpedia Interactive Prompt Analyzer:
+    Computes exact per-token activations and top-firing features for each token position.
+    """
     if state.model is None or state.tokenizer is None:
         return web.json_response({"error": "Base model not loaded."}, status=400)
 
     data = await request.json()
     text = data.get("text", "")
-    top_k_features = int(data.get("top_k_features", 8))
+    top_k_per_token = int(data.get("top_k_per_token", 12))
     target_layer = data.get("layer") or state.active_hook_point
 
     dict_model = get_or_load_dictionary(target_layer)
@@ -272,27 +276,51 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
     with torch.no_grad():
         _ = state.model(**inputs)
         act = hook_mgr.activations[target_layer][0]
-        f = dict_model.encode(act)
+        f = dict_model.encode(act)  # (seq_len, d_sae)
 
     hook_mgr.remove_hooks()
-    tokens = [state.tokenizer.decode([tid]) for tid in inputs["input_ids"][0]]
-
-    mean_acts = f.mean(dim=0)
-    _, top_indices = torch.topk(mean_acts, k=min(top_k_features, f.shape[-1]))
-
-    token_heatmaps = []
+    token_ids = inputs["input_ids"][0].tolist()
+    seq_len = len(token_ids)
     layer_meta = state.feature_metadata.get(target_layer, {})
-    for feat_idx in top_indices.tolist():
-        feat_acts = f[:, feat_idx].tolist()
-        exp = layer_meta.get(feat_idx, {}).get("explanation", f"Feature #{feat_idx}")
-        token_heatmaps.append({
-            "feature_id": feat_idx,
-            "explanation": exp,
-            "mean_activation": float(mean_acts[feat_idx].item()),
-            "token_activations": [{"token": t, "act": a} for t, a in zip(tokens, feat_acts)],
+
+    token_analysis = []
+    for pos in range(seq_len):
+        t_id = token_ids[pos]
+        t_str = state.tokenizer.decode([t_id])
+        pos_acts = f[pos]  # (d_sae,)
+
+        # Non-zero active features on this specific token
+        active_mask = pos_acts > 1e-4
+        total_active = int(active_mask.sum().item())
+
+        top_vals, top_indices = torch.topk(pos_acts, k=min(top_k_per_token, pos_acts.shape[-1]))
+        
+        token_top_features = []
+        for val, feat_idx in zip(top_vals.tolist(), top_indices.tolist()):
+            if val <= 1e-4:
+                continue
+            exp = layer_meta.get(feat_idx, {}).get("explanation", f"Feature #{feat_idx}")
+            token_top_features.append({
+                "feature_id": int(feat_idx),
+                "activation": float(val),
+                "explanation": exp,
+            })
+
+        token_analysis.append({
+            "token_index": pos,
+            "token_str": t_str,
+            "token_id": t_id,
+            "total_active_features": total_active,
+            "max_activation": float(top_vals[0].item()) if len(top_vals) > 0 else 0.0,
+            "top_features": token_top_features,
         })
 
-    return web.json_response({"text": text, "layer": target_layer, "top_features": token_heatmaps})
+    return web.json_response({
+        "text": text,
+        "layer": target_layer,
+        "total_tokens": seq_len,
+        "tokens": token_analysis,
+    })
 
 
 def create_app() -> web.Application:

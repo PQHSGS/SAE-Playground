@@ -1,5 +1,6 @@
 let currentSelectedFeature = 0;
 let currentActiveLayer = "";
+let analyzedTokensData = [];
 
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
@@ -123,6 +124,15 @@ async function selectFeature(featureId) {
   if (titleEl) titleEl.innerText = `Feature #${featureId}`;
   if (layerBadge) layerBadge.innerText = currentActiveLayer;
   if (steerFeatInput) steerFeatInput.value = featureId;
+
+  // Highlight in left sidebar
+  document.querySelectorAll(".feature-item").forEach(item => {
+    if (item.querySelector("h4")?.innerText === `Feature #${featureId}`) {
+      item.classList.add("active");
+    } else {
+      item.classList.remove("active");
+    }
+  });
 
   // Fetch Full Feature Details (Neuronpedia Context Snippets + Logits)
   try {
@@ -261,43 +271,75 @@ function initAnalyze() {
       if (!text) return;
 
       if (resultsCard) resultsCard.classList.remove("hidden");
-      if (container) container.innerHTML = '<div class="loading">Analyzing activations...</div>';
+      if (container) container.innerHTML = '<div class="loading">Computing token activations...</div>';
 
       try {
         const res = await fetch("/api/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: text, top_k_features: 5, layer: currentActiveLayer })
+          body: JSON.stringify({ text: text, top_k_per_token: 10, layer: currentActiveLayer })
         });
 
         if (!res.ok) throw new Error("Analysis failed.");
         const data = await res.json();
+        analyzedTokensData = data.tokens || [];
+
         if (container) {
           container.innerHTML = "";
 
-          data.top_features.forEach(feat => {
-            const card = document.createElement("div");
-            card.className = "card";
-            card.style.marginTop = "12px";
-            
-            const maxAct = Math.max(...feat.token_activations.map(t => t.act), 1e-6);
-            const tokenSpans = feat.token_activations.map(t => {
-              const intensity = Math.min(1.0, Math.max(0.0, t.act / maxAct));
-              const bg = intensity > 0.05 ? `rgba(139, 92, 246, ${Math.max(0.2, intensity * 0.85)})` : 'transparent';
-              const color = intensity > 0.3 ? '#ffffff' : '#cbd5e1';
-              return `<span class="token-pill" style="background:${bg}; color:${color}; font-family: 'JetBrains Mono', monospace; font-size: 13px; display: inline-block; margin: 1px;" title="act: ${t.act.toFixed(3)}">${t.token}</span>`;
-            }).join("");
+          // 1. Render Interactive Clickable Token Chips Bar (Neuronpedia Signature)
+          const chipsBox = document.createElement("div");
+          chipsBox.className = "token-chips-bar";
+          chipsBox.style.background = "#070a12";
+          chipsBox.style.padding = "14px";
+          chipsBox.style.borderRadius = "8px";
+          chipsBox.style.border = "1px solid #1e293b";
+          chipsBox.style.lineHeight = "2.4";
+          chipsBox.style.marginBottom = "18px";
 
-            card.innerHTML = `
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <h4 style="color:#a78bfa; font-family:'JetBrains Mono', monospace; font-size:14px;">Feature #${feat.feature_id}</h4>
-                <span class="max-act-badge">Mean Act: +${feat.mean_activation.toFixed(2)}</span>
-              </div>
-              <p style="font-size:12px; color:#94a3b8; margin-bottom:10px;">${feat.explanation}</p>
-              <div class="snippet-text-box">${tokenSpans}</div>
-            `;
-            container.appendChild(card);
+          const maxSeqAct = Math.max(...analyzedTokensData.map(t => t.max_activation), 1e-4);
+
+          analyzedTokensData.forEach((tok, tIdx) => {
+            const chip = document.createElement("span");
+            const intensity = Math.min(1.0, Math.max(0.0, tok.max_activation / maxSeqAct));
+            const bg = intensity > 0.05 ? `rgba(139, 92, 246, ${Math.max(0.2, intensity * 0.85)})` : '#131b2e';
+            chip.className = `token-chip ${tIdx === analyzedTokensData.length - 1 ? "active" : ""}`;
+            chip.setAttribute("data-token-idx", tIdx);
+            chip.style.padding = "4px 8px";
+            chip.style.margin = "2px 3px";
+            chip.style.borderRadius = "4px";
+            chip.style.fontFamily = "'JetBrains Mono', monospace";
+            chip.style.fontSize = "13px";
+            chip.style.background = bg;
+            chip.style.color = intensity > 0.3 ? "#ffffff" : "#cbd5e1";
+            chip.style.cursor = "pointer";
+            chip.style.border = tIdx === analyzedTokensData.length - 1 ? "1px solid #a78bfa" : "1px solid transparent";
+            chip.style.display = "inline-block";
+            chip.innerText = tok.token_str;
+
+            chip.addEventListener("click", () => {
+              document.querySelectorAll(".token-chip").forEach(c => {
+                c.classList.remove("active");
+                c.style.border = "1px solid transparent";
+              });
+              chip.classList.add("active");
+              chip.style.border = "1px solid #a78bfa";
+              renderTokenActiveFeatures(tIdx);
+            });
+
+            chipsBox.appendChild(chip);
           });
+
+          container.appendChild(chipsBox);
+
+          // 2. Active Features Panel for Selected Token
+          const tokenPanel = document.createElement("div");
+          tokenPanel.id = "token-active-features-panel";
+          container.appendChild(tokenPanel);
+
+          // Default to last token (or highest activating token)
+          const defaultIdx = analyzedTokensData.length > 0 ? analyzedTokensData.length - 1 : 0;
+          renderTokenActiveFeatures(defaultIdx);
         }
       } catch (err) {
         if (container) container.innerHTML = `<div class="card"><p style="color:#ef4444">Error: ${err.message}</p></div>`;
@@ -305,3 +347,58 @@ function initAnalyze() {
     });
   }
 }
+
+function renderTokenActiveFeatures(tokenIdx) {
+  const panel = document.getElementById("token-active-features-panel");
+  if (!panel || !analyzedTokensData[tokenIdx]) return;
+
+  const tok = analyzedTokensData[tokenIdx];
+  const maxTokenAct = tok.max_activation > 0 ? tok.max_activation : 1;
+
+  let featuresHtml = "";
+  if (tok.top_features.length === 0) {
+    featuresHtml = '<div class="empty-msg">No active features detected on this token position.</div>';
+  } else {
+    featuresHtml = tok.top_features.map(f => {
+      const barWidth = Math.min(100, Math.max(5, (f.activation / maxTokenAct) * 100));
+      return `
+        <div class="snippet-card" style="margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#a78bfa;">Feature #${f.feature_id}</span>
+              <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#93c5fd; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 6px; cursor:pointer;">Inspect Details ↗</button>
+            </div>
+            <span class="max-act-badge">Act: +${f.activation.toFixed(3)}</span>
+          </div>
+          <div style="height:4px; background:#070a12; border-radius:2px; overflow:hidden; margin-bottom:8px;">
+            <div style="height:100%; width:${barWidth}%; background:linear-gradient(90deg, #8b5cf6, #ec4899); border-radius:2px;"></div>
+          </div>
+          <p style="font-size:12px; color:#cbd5e1;">${f.explanation}</p>
+        </div>
+      `;
+    }).join("");
+  }
+
+  panel.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+      <div>
+        <span style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700; letter-spacing:0.05em;">Token Focus:</span>
+        <h3 style="font-family:'JetBrains Mono', monospace; color:#f8fafc; font-size:16px; margin-top:2px;">"${tok.token_str}" <span style="font-size:12px; color:#64748b; font-weight:400;">(Token #${tok.token_index}, ID: ${tok.token_id})</span></h3>
+      </div>
+      <span class="count-badge" style="background:#1e293b; color:#a78bfa; font-family:'JetBrains Mono', monospace; font-size:12px; padding:4px 10px;">${tok.total_active_features} Features Fired</span>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      ${featuresHtml}
+    </div>
+  `;
+}
+
+window.jumpToFeature = function(featureId) {
+  const tabs = document.querySelectorAll(".tab-btn");
+  tabs.forEach(t => {
+    if (t.getAttribute("data-tab") === "tab-inspect") {
+      t.click();
+    }
+  });
+  selectFeature(featureId);
+};
