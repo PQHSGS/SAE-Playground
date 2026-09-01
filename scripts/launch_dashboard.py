@@ -98,7 +98,14 @@ def main():
                     loaded_meta = json.load(f)
                 if isinstance(loaded_meta, dict):
                     print(f"Loaded feature metadata from {meta_path}")
-                    state.feature_metadata[hook_point] = {int(k) if k.isdigit() else k: v for k, v in loaded_meta.items()}
+                    first_key = next(iter(loaded_meta.keys())) if loaded_meta else ""
+                    if isinstance(loaded_meta.get(first_key), dict) and not first_key.isdigit():
+                        # Nested multi-layer dictionary format { "model.layers.0": { 0: {...} } }
+                        for lyr, meta_map in loaded_meta.items():
+                            state.feature_metadata[lyr] = {int(k) if str(k).isdigit() else k: v for k, v in meta_map.items()}
+                    else:
+                        # Flat single-layer format
+                        state.feature_metadata[hook_point] = {int(k) if str(k).isdigit() else k: v for k, v in loaded_meta.items()}
                 break
             except Exception as e:
                 print(f"Warning: Failed to load {meta_path}: {e}")
