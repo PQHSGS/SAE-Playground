@@ -350,7 +350,6 @@ def create_app() -> web.Application:
     app.router.add_post("/api/select_layer", select_layer_handler)
     app.router.add_get("/api/features", features_handler)
     app.router.add_get("/api/feature/{feature_id}", feature_details_handler)
-    app.router.add_get("/api/feature/{feature_id}/logits", feature_details_handler)
     app.router.add_post("/api/steer", steer_handler)
     app.router.add_post("/api/analyze", analyze_text_handler)
 
