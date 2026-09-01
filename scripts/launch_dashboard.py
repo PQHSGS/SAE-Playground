@@ -1,14 +1,14 @@
 import argparse
+import json
 import os
 import sys
 import yaml
-import uvicorn
-import torch
+from aiohttp import web
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.dashboard.server import app, state
+from src.dashboard.server import create_app, state
 from src.architectures.registry import get_dictionary_cls
 from src.utils.hf_helpers import load_model_and_tokenizer, get_unembedding_weights
 
@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument("--hook_point", type=str, default=None, help="Submodule hook point")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host address")
     parser.add_argument("--port", type=int, default=8000, help="Port")
+    parser.add_argument("--device", type=str, default="cpu", help="Device for dashboard (cpu or cuda)")
     return parser.parse_args()
 
 
@@ -40,10 +41,10 @@ def main():
 
     if args.config:
         cfg = load_yaml(args.config)
-        model_name = model_name or cfg.get("model_name_or_path", "gpt2")
-        hook_point = hook_point or cfg.get("hook_points", ["transformer.h.6"])[0]
+        model_name = model_name or cfg.get("model_name_or_path", "google/gemma-3-270m")
+        hook_point = hook_point or cfg.get("hook_points", ["model.layers.9"])[0]
         if not checkpoint_dir:
-            out_dir = cfg.get("output_dir", "checkpoints")
+            out_dir = cfg.get("output_dir", "checkpoints/gemma3_270m_resid")
             if os.path.exists(out_dir):
                 subdirs = [os.path.join(out_dir, d) for d in os.listdir(out_dir) if d.startswith("step_")]
                 if subdirs:
@@ -52,36 +53,69 @@ def main():
                 else:
                     checkpoint_dir = out_dir
 
-    model_name = model_name or "gpt2"
-    hook_point = hook_point or "transformer.h.6"
+    model_name = model_name or "google/gemma-3-270m"
+    hook_point = hook_point or "model.layers.9"
+    checkpoint_dir = checkpoint_dir or "checkpoints/gemma3_270m_resid/step_25000"
 
-    print(f"Initializing Playground Dashboard on http://localhost:{args.port}...")
+    print(f"🚀 Initializing Playground Dashboard on http://localhost:{args.port} (device={args.device})...")
     
-    # Load LLM
-    print(f"Loading base LLM '{model_name}'...")
-    model, tokenizer = load_model_and_tokenizer(model_name, device_map="auto")
+    # 1. Load Base LLM
+    print(f"📦 Loading base LLM '{model_name}' on {args.device}...")
+    model, tokenizer = load_model_and_tokenizer(model_name, device_map=args.device)
     state.model = model
     state.tokenizer = tokenizer
-    state.hook_point = hook_point
-    state.unembedding_weights = get_unembedding_weights(model)
+    state.unembedding_weights = get_unembedding_weights(model).to(args.device)
 
-    # Load Dictionary if provided
+    # 2. Discover Available Layers (Multi-Layer or Single-Layer Checkpoint)
+    available_layers = {}
     if checkpoint_dir and os.path.exists(checkpoint_dir):
-        import json
-        with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
-            cfg = json.load(f)
-        cls_name = cfg.get("class_name", "TopKSAE")
-        cls = get_dictionary_cls(cls_name)
-        state.dictionary_model = cls.from_pretrained(checkpoint_dir, device="cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Loaded {cls_name} dictionary from {checkpoint_dir} (d_sae={state.dictionary_model.d_sae})")
-    else:
-        # Build lightweight demo TopK dictionary
-        from src.architectures.sae.topk_sae import TopKSAE
-        d_in = state.unembedding_weights.shape[0] if state.unembedding_weights.ndim == 2 else 768
-        state.dictionary_model = TopKSAE(d_in=d_in, d_sae=d_in * 4, k=16).to(model.device)
-        print(f"Created demo TopK dictionary: d_in={d_in}, d_sae={d_in * 4}")
+        multi_cfg_file = os.path.join(checkpoint_dir, "multi_sae_config.json")
+        if os.path.exists(multi_cfg_file):
+            with open(multi_cfg_file, "r") as f:
+                multi_cfg = json.load(f)
+            layer_hooks = multi_cfg.get("hook_points", [])
+            for hp in layer_hooks:
+                safe_name = hp.replace(".", "_")
+                subpath = os.path.join(checkpoint_dir, safe_name)
+                if os.path.exists(subpath):
+                    available_layers[hp] = subpath
+        elif os.path.exists(os.path.join(checkpoint_dir, "config.json")):
+            available_layers[hook_point] = checkpoint_dir
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    state.available_layers = available_layers
+    state.checkpoint_dir = checkpoint_dir
+
+    # 3. Load pre-computed feature metadata / auto-interp results if present
+    metadata_candidates = [
+        "data/feature_metadata.json",
+        "data/auto_interp_results.json",
+        "data/gemma3_270m_feature_metadata.json"
+    ]
+    for meta_path in metadata_candidates:
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    loaded_meta = json.load(f)
+                if isinstance(loaded_meta, dict):
+                    print(f"Loaded feature metadata from {meta_path}")
+                    state.feature_metadata[hook_point] = {int(k) if k.isdigit() else k: v for k, v in loaded_meta.items()}
+                break
+            except Exception as e:
+                print(f"Warning: Failed to load {meta_path}: {e}")
+
+    # 4. Activate initial hook point
+    if hook_point in state.available_layers:
+        subfolder = state.available_layers[hook_point]
+        with open(os.path.join(subfolder, "config.json"), "r") as f:
+            cfg = json.load(f)
+        cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
+        state.loaded_dictionaries[hook_point] = cls.from_pretrained(subfolder, device=args.device)
+        state.active_hook_point = hook_point
+        print(f"Active dictionary layer set to: '{hook_point}'")
+
+    print(f"✨ Dashboard ready! Available Layers: {len(state.available_layers)}")
+    app = create_app()
+    web.run_app(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

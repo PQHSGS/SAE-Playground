@@ -1,3 +1,3 @@
-from src.dashboard.server import app, state
+from src.dashboard.server import create_app, state
 
-__all__ = ["app", "state"]
+__all__ = ["create_app", "state"]

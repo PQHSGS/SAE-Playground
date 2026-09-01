@@ -34,7 +34,11 @@ def load_model_and_tokenizer(
     }
     selected_dtype = dtype_map.get(torch_dtype, torch.bfloat16)
 
-    # 1. Standard HuggingFace AutoModel pipeline (works for 99.9% of models on HuggingFace)
+    # 1. Custom architecture handler (PlanckGPT)
+    if "planckgpt" in model_name_or_path.lower():
+        return _load_planckgpt_fallback(model_name_or_path, selected_dtype, device_map)
+
+    # 2. Standard HuggingFace AutoModel pipeline
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
@@ -48,13 +52,13 @@ def load_model_and_tokenizer(
             "trust_remote_code": trust_remote_code,
             "torch_dtype": selected_dtype,
         }
-        target_device = "cuda" if torch.cuda.is_available() else "cpu"
+        target_device = device_map if device_map in ["cpu", "cuda"] else ("cuda" if torch.cuda.is_available() else "cpu")
         if not (load_in_4bit or load_in_8bit):
             kwargs["device_map"] = target_device
         else:
             kwargs["device_map"] = "auto"
 
-        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention") and target_device != "cpu":
             kwargs["attn_implementation"] = "sdpa"
 
         if load_in_4bit:
@@ -70,12 +74,6 @@ def load_model_and_tokenizer(
         return model, tokenizer
 
     except Exception as e:
-        logger.warning(f"Standard AutoModel load failed ({e}). Checking for custom/raw checkpoint fallbacks...")
-
-        # 2. Transparent fallback for custom repos with raw state_dict (e.g., PlanckGPT)
-        if "planckgpt" in model_name_or_path.lower():
-            return _load_planckgpt_fallback(model_name_or_path, selected_dtype, device_map)
-        
         raise RuntimeError(f"Failed to load model '{model_name_or_path}': {e}")
 
 

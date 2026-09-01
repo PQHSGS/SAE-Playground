@@ -22,11 +22,14 @@ class FeatureExplainer:
         load_in_8bit: bool = False,
         torch_dtype: str = "bfloat16",
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        provider: str = "auto",
     ):
         self.model_name = model_name
         self.device = device
+        self.provider = provider
         self.pipeline = None
-        self._init_local_llm(model_name, load_in_4bit, load_in_8bit, torch_dtype)
+        if provider != "heuristic":
+            self._init_local_llm(model_name, load_in_4bit, load_in_8bit, torch_dtype)
 
     def _init_local_llm(self, model_name: str, load_in_4bit: bool, load_in_8bit: bool, torch_dtype: str):
         logger.info(f"Loading local auto-interpretation LLM: '{model_name}' (4-bit={load_in_4bit}, 8-bit={load_in_8bit})")
