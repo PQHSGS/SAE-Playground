@@ -91,14 +91,14 @@ class SphericalTreeSASA(BaseSAE):
         """
         return self.w_dec
 
-    def normalize_decoder_weights(self) -> None:
+    @torch.no_grad()
+    def normalize_decoder_weights(self, eps: float = 1e-8, **kwargs) -> None:
         """
         Enforces unit-norm constraints on coarse centroids and fine subspace basis vectors.
         """
-        with torch.no_grad():
-            self.w_coarse_dec.div_(self.w_coarse_dec.norm(dim=-1, keepdim=True) + 1e-8)
-            self.w_dec.div_(self.w_dec.norm(dim=-1, keepdim=True) + 1e-8)
-            self.w_rot.div_(self.w_rot.norm(dim=-1, keepdim=True) + 1e-8)
+        self.w_coarse_dec.div_(self.w_coarse_dec.norm(dim=-1, keepdim=True) + eps)
+        self.w_dec.div_(self.w_dec.norm(dim=-1, keepdim=True) + eps)
+        self.w_rot.div_(self.w_rot.norm(dim=-1, keepdim=True) + eps)
 
     def encode(
         self,
