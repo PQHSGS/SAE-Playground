@@ -22,10 +22,15 @@ hook_points:
   - "transformer.12"
   - "transformer.13"
 
-architecture: "batch_topk"
-expansion_factor: 8       # d_sae = 896 * 8 = 7,168 features per layer
-k: 32                      # BatchTopK: selects total_k = (batch_size * k) active latents globally
-aux_loss_coeff: 0.03125    # OpenAI Aux Loss for dead latents
+architecture: "spherical_tree_sasa"
+expansion_factor: 4        # d_sae = 896 * 4 = 3,584 subspaces per layer (3,584 x 2 = 7,168 basis directions)
+subspace_rank: 2           # 2D Stiefel Grassmannian Subspaces
+num_coarse: 64             # 64 coarse parent concept centroids
+k: 32                      # BatchTopK active subspaces per layer
+k_coarse: 8                # Top-8 coarse parent routing
+aux_loss_coeff: 0.03125    # Subspace Auxiliary Residual Loss for Dead Latents
+coarse_loss_coeff: 0.25    # Coarse parent reconstruction loss
+ortho_loss_coeff: 0.0001   # Subspace basis orthogonality regularizer
 
 dataset_path: "HuggingFaceFW/fineweb-edu"
 dataset_name: "sample-10BT"
@@ -37,8 +42,7 @@ lr_warmup_steps: 1000
 total_steps: 25000
 checkpoint_steps: 2500
 dead_feature_threshold: 1000000
-use_ghost_grads: true
-ghost_grad_coeff: 0.1
-output_dir: "checkpoints/planckgpt_resid"
+use_ghost_grads: false     # Native Subspace Aux Loss handles anti-death
+output_dir: "checkpoints/planckgpt_spherical_tree_sasa"
 wandb_project: "planckgpt-sae"
 seed: 42
