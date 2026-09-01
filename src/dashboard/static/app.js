@@ -17,7 +17,10 @@ function initTabs() {
       document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
       btn.classList.add("active");
       const targetId = btn.getAttribute("data-tab");
-      document.getElementById(targetId).classList.add("active");
+      const targetPane = document.getElementById(targetId);
+      if (targetPane) {
+        targetPane.classList.add("active");
+      }
     });
   });
 }
@@ -108,9 +111,13 @@ async function loadFeatures(searchQuery = "") {
 
 async function selectFeature(featureId, explanation) {
   currentSelectedFeature = featureId;
-  document.getElementById("inspect-title").innerText = `Feature #${featureId} (${currentActiveLayer})`;
-  document.getElementById("inspect-explanation").innerText = explanation || `Feature #${featureId}`;
-  document.getElementById("steer-feat-id").value = featureId;
+  const titleEl = document.getElementById("inspect-title");
+  const expEl = document.getElementById("inspect-explanation");
+  const steerFeatInput = document.getElementById("steer-feat-id");
+
+  if (titleEl) titleEl.innerText = `Feature #${featureId} (${currentActiveLayer})`;
+  if (expEl) expEl.innerText = explanation || `Feature #${featureId}`;
+  if (steerFeatInput) steerFeatInput.value = featureId;
 
   // Fetch Logit Lens Attribution
   try {
@@ -119,99 +126,128 @@ async function selectFeature(featureId, explanation) {
     const data = await res.json();
 
     const promList = document.getElementById("promoted-list");
-    promList.innerHTML = data.promoted_tokens.map(t => `
-      <div class="token-row">
-        <span>"${t.token}"</span>
-        <span class="token-pos">+${t.logit.toFixed(3)}</span>
-      </div>
-    `).join("");
+    if (promList) {
+      promList.innerHTML = data.promoted_tokens.map(t => `
+        <div class="token-row">
+          <span>"${t.token}"</span>
+          <span class="token-pos">+${t.logit.toFixed(3)}</span>
+        </div>
+      `).join("");
+    }
 
     const suppList = document.getElementById("suppressed-list");
-    suppList.innerHTML = data.suppressed_tokens.map(t => `
-      <div class="token-row">
-        <span>"${t.token}"</span>
-        <span class="token-neg">${t.logit.toFixed(3)}</span>
-      </div>
-    `).join("");
+    if (suppList) {
+      suppList.innerHTML = data.suppressed_tokens.map(t => `
+        <div class="token-row">
+          <span>"${t.token}"</span>
+          <span class="token-neg">${t.logit.toFixed(3)}</span>
+        </div>
+      `).join("");
+    }
   } catch (err) {
     console.error("Failed to load logits:", err);
   }
 }
 
 function initSteeringControls() {
-  const steerBtn = document.getElementById("steer-run-btn");
-  const outputEl = document.getElementById("steered-output");
+  const steerBtn = document.getElementById("btn-steer");
+  const alphaSlider = document.getElementById("steer-alpha");
+  const alphaLabel = document.getElementById("alpha-val");
+  const outputBox = document.getElementById("steer-output");
+  const outputText = document.getElementById("steered-text");
 
-  steerBtn.addEventListener("click", async () => {
-    const prompt = document.getElementById("steer-prompt").value;
-    const featId = parseInt(document.getElementById("steer-feat-id").value, 10);
-    const alpha = parseFloat(document.getElementById("steer-scale").value);
+  if (alphaSlider && alphaLabel) {
+    alphaSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      alphaLabel.innerText = `${val >= 0 ? "+" : ""}${val.toFixed(1)}`;
+    });
+  }
 
-    if (isNaN(featId) || !prompt) return;
+  if (steerBtn) {
+    steerBtn.addEventListener("click", async () => {
+      const promptInput = document.getElementById("steer-prompt");
+      const featInput = document.getElementById("steer-feat-id");
+      const prompt = promptInput ? promptInput.value : "";
+      const featId = featInput ? parseInt(featInput.value, 10) : 0;
+      const alpha = alphaSlider ? parseFloat(alphaSlider.value) : 5.0;
 
-    outputEl.innerText = "Steering model generation in progress...";
-    try {
-      const res = await fetch("/api/steer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: prompt,
-          steered_features: { [featId]: alpha },
-          max_new_tokens: 40,
-          temperature: 0.7,
-          layer: currentActiveLayer
-        })
-      });
+      if (isNaN(featId) || !prompt) return;
 
-      if (!res.ok) throw new Error("Steering request failed.");
-      const data = await res.json();
-      outputEl.innerText = data.generated_text;
-    } catch (err) {
-      outputEl.innerText = `Error: ${err.message}`;
-    }
-  });
+      if (outputBox) outputBox.classList.remove("hidden");
+      if (outputText) outputText.innerText = "Steering model generation in progress...";
+
+      try {
+        const res = await fetch("/api/steer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: prompt,
+            steered_features: { [featId]: alpha },
+            max_new_tokens: 40,
+            temperature: 0.7,
+            layer: currentActiveLayer
+          })
+        });
+
+        if (!res.ok) throw new Error("Steering request failed.");
+        const data = await res.json();
+        if (outputText) outputText.innerText = data.generated_text;
+      } catch (err) {
+        if (outputText) outputText.innerText = `Error: ${err.message}`;
+      }
+    });
+  }
 }
 
 function initAnalyze() {
-  const analyzeBtn = document.getElementById("analyze-btn");
-  const container = document.getElementById("heatmap-container");
+  const analyzeBtn = document.getElementById("btn-analyze");
+  const analyzeInput = document.getElementById("analyze-input");
+  const resultsCard = document.getElementById("analyze-results");
+  const container = document.getElementById("heatmaps-container");
 
-  analyzeBtn.addEventListener("click", async () => {
-    const text = document.getElementById("analyze-text").value;
-    if (!text) return;
+  if (analyzeBtn && analyzeInput) {
+    analyzeBtn.addEventListener("click", async () => {
+      const text = analyzeInput.value;
+      if (!text) return;
 
-    container.innerHTML = '<div class="loading">Analyzing activations...</div>';
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text, top_k_features: 5, layer: currentActiveLayer })
-      });
+      if (resultsCard) resultsCard.classList.remove("hidden");
+      if (container) container.innerHTML = '<div class="loading">Analyzing activations...</div>';
 
-      if (!res.ok) throw new Error("Analysis failed.");
-      const data = await res.json();
-      container.innerHTML = "";
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: text, top_k_features: 5, layer: currentActiveLayer })
+        });
 
-      data.top_features.forEach(feat => {
-        const card = document.createElement("div");
-        card.className = "card";
-        
-        const maxAct = Math.max(...feat.token_activations.map(t => t.act), 1e-6);
-        const tokenSpans = feat.token_activations.map(t => {
-          const intensity = Math.min(1, Math.max(0, t.act / maxAct));
-          const bg = `rgba(59, 130, 246, ${intensity * 0.8})`;
-          return `<span class="token-pill" style="background:${bg}; padding: 2px 4px; border-radius: 4px; margin: 1px;">${t.token}</span>`;
-        }).join("");
+        if (!res.ok) throw new Error("Analysis failed.");
+        const data = await res.json();
+        if (container) {
+          container.innerHTML = "";
 
-        card.innerHTML = `
-          <h4>Feature #${feat.feature_id} — ${feat.explanation}</h4>
-          <p style="font-size:0.85rem; color:#a1a1aa; margin-bottom:8px;">Mean Activation: ${feat.mean_activation.toFixed(3)}</p>
-          <div style="line-height: 2;">${tokenSpans}</div>
-        `;
-        container.appendChild(card);
-      });
-    } catch (err) {
-      container.innerHTML = `<div class="card"><p style="color:#ef4444">Error: ${err.message}</p></div>`;
-    }
-  });
+          data.top_features.forEach(feat => {
+            const card = document.createElement("div");
+            card.className = "card";
+            card.style.marginTop = "12px";
+            
+            const maxAct = Math.max(...feat.token_activations.map(t => t.act), 1e-6);
+            const tokenSpans = feat.token_activations.map(t => {
+              const intensity = Math.min(1, Math.max(0, t.act / maxAct));
+              const bg = `rgba(59, 130, 246, ${intensity * 0.8})`;
+              return `<span class="token-pill" style="background:${bg}; padding: 3px 6px; border-radius: 4px; margin: 2px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; display: inline-block;">${t.token}</span>`;
+            }).join("");
+
+            card.innerHTML = `
+              <h4 style="margin-bottom:4px; color:#60a5fa;">Feature #${feat.feature_id} — ${feat.explanation}</h4>
+              <p style="font-size:0.8rem; color:#a1a1aa; margin-bottom:8px;">Mean Activation: ${feat.mean_activation.toFixed(3)}</p>
+              <div style="line-height: 2.2; background:#18181b; padding:10px; border-radius:6px; border: 1px solid #27272a;">${tokenSpans}</div>
+            `;
+            container.appendChild(card);
+          });
+        }
+      } catch (err) {
+        if (container) container.innerHTML = `<div class="card"><p style="color:#ef4444">Error: ${err.message}</p></div>`;
+      }
+    });
+  }
 }
