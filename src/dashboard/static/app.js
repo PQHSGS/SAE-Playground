@@ -102,10 +102,10 @@ async function loadFeatures(searchQuery = "") {
     data.features.forEach((feat, idx) => {
       const item = document.createElement("div");
       item.className = `feature-item ${idx === 0 ? "active" : ""}`;
-      const labelText = feat.explanation || `Feature #${feat.feature_id}`;
+      const titleText = feat.title || feat.explanation || `Feature #${feat.feature_id}`;
       item.innerHTML = `
         <div class="feature-item-top-label">
-          <span class="label-pill" title="${escapeHtml(labelText)}">${escapeHtml(labelText)}</span>
+          <span class="label-pill" title="${escapeHtml(feat.explanation || titleText)}">${escapeHtml(titleText)}</span>
         </div>
         <div class="feature-item-sub">
           <span class="feat-id-tag">Feature #${feat.feature_id}</span>
@@ -143,7 +143,7 @@ async function selectFeature(featureId) {
 
   // Highlight in left sidebar
   document.querySelectorAll(".feature-item").forEach(item => {
-    if (item.querySelector("h4")?.innerText === `Feature #${featureId}`) {
+    if (item.querySelector(".feat-id-tag")?.innerText === `Feature #${featureId}`) {
       item.classList.add("active");
     } else {
       item.classList.remove("active");
@@ -156,6 +156,11 @@ async function selectFeature(featureId) {
     if (!res.ok) return;
     const data = await res.json();
 
+    if (titleEl) {
+      titleEl.innerText = (data.title && data.title !== `Feature #${featureId}`) 
+        ? `${data.title} (#${featureId})` 
+        : `Feature #${featureId}`;
+    }
     if (expEl) expEl.innerText = data.explanation || `Feature #${featureId}`;
     if (maxActEl) maxActEl.innerText = `+${data.max_activation.toFixed(2)}`;
     if (firingRateEl) firingRateEl.innerText = `${(data.firing_rate * 100).toFixed(3)}%`;
@@ -377,7 +382,8 @@ function renderTokenActiveFeatures(tokenIdx) {
   } else {
     featuresHtml = tok.top_features.map(f => {
       const barWidth = Math.min(100, Math.max(5, (f.activation / maxTokenAct) * 100));
-      const labelText = f.explanation || `Feature #${f.feature_id}`;
+      const titleText = f.title || `Feature #${f.feature_id}`;
+      const descText = f.description || (f.explanation && f.explanation !== titleText ? f.explanation : "");
       const promotedBadges = (f.top_promoted_tokens && f.top_promoted_tokens.length > 0)
         ? `<div style="margin-top:7px; font-size:11.5px; color:#94a3b8; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
              <span style="font-weight:600; color:#64748b;">Promotes:</span>
@@ -388,11 +394,12 @@ function renderTokenActiveFeatures(tokenIdx) {
       return `
         <div class="snippet-card" style="margin-bottom:10px; border-left: 3px solid #8b5cf6; padding:12px 14px;">
           <div style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
-            <span class="label-pill-bright" style="white-space:normal; font-size:12.5px; line-height:1.4;" title="${escapeHtml(labelText)}">🏷️ ${escapeHtml(labelText)}</span>
+            <span class="label-pill-bright" style="white-space:normal; font-size:13px; font-weight:700; line-height:1.4;" title="${escapeHtml(descText || titleText)}">🏷️ ${escapeHtml(titleText)}</span>
           </div>
+          ${descText ? `<p style="font-size:12px; color:#cbd5e1; margin-bottom:8px; line-height:1.4;">${escapeHtml(descText)}</p>` : ""}
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <div style="display:flex; align-items:center; gap:8px;">
-              <span style="font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#93c5fd;">Feature #${f.feature_id}</span>
+              <span style="font-family:'JetBrains Mono', monospace; font-size:12.5px; font-weight:700; color:#93c5fd;">Feature #${f.feature_id}</span>
               <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#a78bfa; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 7px; cursor:pointer; font-weight:600;">Inspect Full Details ↗</button>
             </div>
             <span class="max-act-badge">Act: +${f.activation.toFixed(3)}</span>

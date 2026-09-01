@@ -69,7 +69,14 @@ def process_layer_metadata(
     layer_results = {}
     for feat_id in range(total_feats):
         snippets = collector.get_feature_snippets(feat_id) if collector else []
-        base_explanation = explainer.explain_feature(feat_id, snippets) if collector else f"Feature #{feat_id}"
+        if collector:
+            res = explainer.explain_feature(feat_id, snippets)
+            if isinstance(res, (tuple, list)):
+                title, desc = res[0], res[1]
+            else:
+                title, desc = f"Feature #{feat_id}", str(res)
+        else:
+            title, desc = f"Feature #{feat_id}", "Unlabeled feature."
 
         promoted = [
             {"token": tokenizer.decode([idx.item()]), "token_id": idx.item(), "logit": float(val.item())}
@@ -92,11 +99,13 @@ def process_layer_metadata(
         max_act = max([s.max_activation for s in snippets] + [0.0])
 
         top_tokens_str = ", ".join([f"'{p['token']}' (+{p['logit']:.1f})" for p in promoted[:3]])
-        full_explanation = f"{base_explanation} (Promotes: {top_tokens_str})"
+        full_explanation = f"[{title}] {desc} (Promotes: {top_tokens_str})"
 
         layer_results[feat_id] = {
             "feature_id": feat_id,
             "layer": layer_hook,
+            "title": title,
+            "description": desc,
             "explanation": full_explanation,
             "snippet_count": len(snippets),
             "max_activation": float(max_act),

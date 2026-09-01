@@ -170,6 +170,8 @@ async def features_handler(request: web.Request) -> web.Response:
         fmeta = get_feature_meta(target_layer, idx)
         features.append({
             "feature_id": idx,
+            "title": fmeta.get("title", f"Feature #{idx}"),
+            "description": fmeta.get("description", ""),
             "explanation": fmeta.get("explanation", f"Feature #{idx}"),
             "l0_firing_rate": fmeta.get("firing_rate", 0.0),
             "max_activation": fmeta.get("max_activation", 0.0),
@@ -213,6 +215,8 @@ async def feature_details_handler(request: web.Request) -> web.Response:
     return web.json_response({
         "feature_id": feature_id,
         "layer": target_layer,
+        "title": meta.get("title", f"Feature #{feature_id}"),
+        "description": meta.get("description", ""),
         "explanation": meta.get("explanation", f"Feature #{feature_id}"),
         "max_activation": float(max_act),
         "firing_rate": float(firing_rate),
@@ -310,10 +314,13 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
             if val <= 1e-4:
                 continue
             fmeta = get_feature_meta(target_layer, feat_idx)
+            title = fmeta.get("title", f"Feature #{feat_idx}")
             exp = fmeta.get("explanation", f"Feature #{feat_idx}")
             promoted = fmeta.get("top_promoted_tokens", [])
             token_top_features.append({
                 "feature_id": int(feat_idx),
+                "title": title,
+                "description": fmeta.get("description", ""),
                 "activation": float(val),
                 "explanation": exp,
                 "top_promoted_tokens": promoted,
