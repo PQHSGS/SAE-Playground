@@ -61,12 +61,17 @@ def get_or_load_dictionary(layer: str) -> Optional[torch.nn.Module]:
     return dict_model
 
 
+def get_feature_meta(target_layer: str, feature_id: int) -> Dict:
+    layer_dict = state.feature_metadata.get(target_layer, state.feature_metadata.get(target_layer.replace("model.layers.", ""), {}))
+    return layer_dict.get(str(feature_id), layer_dict.get(feature_id, {}))
+
+
 def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, feature_id: int) -> List[Dict]:
     """Computes or retrieves top activating context snippets with token-level activation values."""
     if state.model is None or state.tokenizer is None:
         return []
 
-    meta = state.feature_metadata.get(target_layer, {}).get(feature_id, {})
+    meta = get_feature_meta(target_layer, feature_id)
     if "snippets" in meta and meta["snippets"]:
         return meta["snippets"]
 
@@ -144,13 +149,12 @@ async def features_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Layer '{target_layer}' is not available."}, status=400)
 
     total_features = dict_model.d_sae
-    layer_meta = state.feature_metadata.get(target_layer, {})
 
     if search:
         search_lower = search.lower()
         matching_indices = [
             idx for idx in range(total_features)
-            if search_lower in layer_meta.get(idx, {}).get("explanation", f"Feature #{idx}").lower() or str(idx) == search_lower
+            if search_lower in get_feature_meta(target_layer, idx).get("explanation", f"Feature #{idx}").lower() or str(idx) == search_lower
         ]
         total_features = len(matching_indices)
         start_idx = (page - 1) * page_size
@@ -161,16 +165,16 @@ async def features_handler(request: web.Request) -> web.Response:
         end_idx = min(start_idx + page_size, total_features)
         page_indices = list(range(start_idx, end_idx))
 
-    features = [
-        {
+    features = []
+    for idx in page_indices:
+        fmeta = get_feature_meta(target_layer, idx)
+        features.append({
             "feature_id": idx,
-            "explanation": layer_meta.get(idx, {}).get("explanation", f"Feature #{idx}"),
-            "l0_firing_rate": layer_meta.get(idx, {}).get("firing_rate", 0.0),
-            "max_activation": layer_meta.get(idx, {}).get("max_activation", 0.0),
-            "top_promoted_tokens": layer_meta.get(idx, {}).get("top_promoted_tokens", []),
-        }
-        for idx in page_indices
-    ]
+            "explanation": fmeta.get("explanation", f"Feature #{idx}"),
+            "l0_firing_rate": fmeta.get("firing_rate", 0.0),
+            "max_activation": fmeta.get("max_activation", 0.0),
+            "top_promoted_tokens": fmeta.get("top_promoted_tokens", []),
+        })
 
     return web.json_response({
         "layer": target_layer,
@@ -200,7 +204,7 @@ async def feature_details_handler(request: web.Request) -> web.Response:
         tokenizer=state.tokenizer,
         top_k=top_k,
     )
-    meta = state.feature_metadata.get(target_layer, {}).get(feature_id, {})
+    meta = get_feature_meta(target_layer, feature_id)
     snippets = get_top_activating_snippets(dict_model, target_layer, feature_id)
 
     max_act = meta.get("max_activation", max([s["max_activation"] for s in snippets] + [0.0]))
@@ -306,7 +310,7 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
         for val, feat_idx in zip(top_vals.tolist(), top_indices.tolist()):
             if val <= 1e-4:
                 continue
-            exp = layer_meta.get(feat_idx, {}).get("explanation", f"Feature #{feat_idx}")
+            exp = get_feature_meta(target_layer, feat_idx).get("explanation", f"Feature #{feat_idx}")
             token_top_features.append({
                 "feature_id": int(feat_idx),
                 "activation": float(val),

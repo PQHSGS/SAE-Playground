@@ -2,6 +2,16 @@ let currentSelectedFeature = 0;
 let currentActiveLayer = "";
 let analyzedTokensData = [];
 
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initLayers();
@@ -92,9 +102,15 @@ async function loadFeatures(searchQuery = "") {
     data.features.forEach((feat, idx) => {
       const item = document.createElement("div");
       item.className = `feature-item ${idx === 0 ? "active" : ""}`;
+      const labelText = feat.explanation || `Feature #${feat.feature_id}`;
       item.innerHTML = `
-        <h4>Feature #${feat.feature_id}</h4>
-        <p>${feat.explanation}</p>
+        <div class="feature-item-top-label">
+          <span class="label-pill" title="${escapeHtml(labelText)}">${escapeHtml(labelText)}</span>
+        </div>
+        <div class="feature-item-sub">
+          <span class="feat-id-tag">Feature #${feat.feature_id}</span>
+          ${feat.max_activation ? `<span class="max-act-badge">+${feat.max_activation.toFixed(2)}</span>` : ""}
+        </div>
       `;
       item.addEventListener("click", () => {
         document.querySelectorAll(".feature-item").forEach(i => i.classList.remove("active"));
@@ -361,19 +377,22 @@ function renderTokenActiveFeatures(tokenIdx) {
   } else {
     featuresHtml = tok.top_features.map(f => {
       const barWidth = Math.min(100, Math.max(5, (f.activation / maxTokenAct) * 100));
+      const labelText = f.explanation || `Feature #${f.feature_id}`;
       return `
-        <div class="snippet-card" style="margin-bottom:8px;">
+        <div class="snippet-card" style="margin-bottom:10px; border-left: 3px solid #8b5cf6;">
+          <div style="margin-bottom:8px;">
+            <span class="label-pill-bright" title="${escapeHtml(labelText)}">${escapeHtml(labelText)}</span>
+          </div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <div style="display:flex; align-items:center; gap:8px;">
-              <span style="font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#a78bfa;">Feature #${f.feature_id}</span>
-              <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#93c5fd; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 6px; cursor:pointer;">Inspect Details ↗</button>
+              <span style="font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700; color:#93c5fd;">Feature #${f.feature_id}</span>
+              <button onclick="jumpToFeature(${f.feature_id})" style="background:#1e293b; color:#a78bfa; border:1px solid #334155; border-radius:4px; font-size:11px; padding:2px 7px; cursor:pointer; font-weight:600;">Inspect Details ↗</button>
             </div>
             <span class="max-act-badge">Act: +${f.activation.toFixed(3)}</span>
           </div>
-          <div style="height:4px; background:#070a12; border-radius:2px; overflow:hidden; margin-bottom:8px;">
+          <div style="height:4px; background:#070a12; border-radius:2px; overflow:hidden;">
             <div style="height:100%; width:${barWidth}%; background:linear-gradient(90deg, #8b5cf6, #ec4899); border-radius:2px;"></div>
           </div>
-          <p style="font-size:12px; color:#cbd5e1;">${f.explanation}</p>
         </div>
       `;
     }).join("");
