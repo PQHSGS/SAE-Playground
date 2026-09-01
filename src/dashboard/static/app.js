@@ -182,7 +182,7 @@ function initAnalyze() {
 
     container.innerHTML = '<div class="loading">Analyzing activations...</div>';
     try {
-      const res = await fetch("/api/analyze_text", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text, top_k_features: 5, layer: currentActiveLayer })
