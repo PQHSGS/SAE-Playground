@@ -11,17 +11,17 @@ from src.architectures.registry import register_dictionary
 @register_dictionary("sts_sae")
 class SphericalTreeSASA(BaseSAE):
     """
-    SphericalTreeSASA (Spherical Subspace Tree Sparse Autoencoder).
+    Generalized Dynamic SphericalTreeSASA (Hyperspherical N-Dimensional Subspace Tree SAE).
     
-    A unified multi-scale architecture combining:
-    1. Hyperspherical Cosine-Scored Metric: Scale-invariant projection on S^(d-1),
-       eliminating token norm bias and attention-sink distortion.
-    2. Hierarchical 2-Level Tree Topology: Coarse parent concept centroids (M=64)
-       routing to fine-grained child feature leaves (TreeSAE).
-    3. Multi-Dimensional Subspace Manifolds: 2D planar subspace frames per leaf (r=2)
-       to capture continuous rotational concepts without feature splitting (SASA).
-    4. Global BatchTopK Dynamic Sparsity: Dynamically allocates firing slots across
-       tokens based on conceptual richness rather than vector magnitude.
+    Combines:
+    1. Hyperspherical Cosine-Scored Metric on S^(d-1): Eliminates token norm bias and attention-sink distortion.
+    2. Hierarchical 2-Level Tree Topology: Coarse parent concept centroids (M=64) routing to child subspace leaves.
+    3. Generalized N-Dimensional Stiefel Subspace Frames: Parameterized as (d_sae, subspace_rank, d_in) with
+       strict Gram-Schmidt orthonormalization, eliminating coordinate entanglement.
+    4. Exact N-Dimensional Tensorized Reconstruction: Preserves full manifold coordinates without basis starvation.
+    5. Subspace Auxiliary Residual Loss (L_sub_aux): Continuous softplus gradient flow into dead subspaces,
+       eliminating the winner-takes-all domination cliff in middle layers.
+    6. Bounded Geometric Bias: Parameterized via 0.5 * tanh(b_raw) to prevent permanent geometric freeze.
     """
 
     def __init__(
@@ -61,10 +61,15 @@ class SphericalTreeSASA(BaseSAE):
         self.w_coarse_enc = nn.Parameter(torch.empty(d_in, num_coarse))
         self.w_coarse_dec = nn.Parameter(torch.empty(num_coarse, d_in))
 
-        # 2. Level 2: Fine leaf 2D subspace frame (primary basis w_dec, orthogonal rotation w_rot)
+        # 2. Level 2: Generalized N-Dimensional Subspace Frames
+        # Primary basis w_dec is a leaf parameter for direct DLA attribution and optimizer tracking
         self.w_dec = nn.Parameter(torch.empty(d_sae, d_in))
-        self.w_rot = nn.Parameter(torch.empty(d_sae, d_in))
+        if self.subspace_rank > 1:
+            self.w_rot = nn.Parameter(torch.empty(d_sae, self.subspace_rank - 1, d_in))
+        else:
+            self.register_parameter("w_rot", None)
         
+        # Bounded encoder bias raw parameter (mapped via 0.5 * tanh)
         self.b_enc = nn.Parameter(torch.zeros(d_sae))
         self.b_dec = nn.Parameter(torch.zeros(d_in))
 
@@ -77,13 +82,22 @@ class SphericalTreeSASA(BaseSAE):
             self.w_coarse_dec.div_(self.w_coarse_dec.norm(dim=-1, keepdim=True) + 1e-8)
             self.w_coarse_enc.copy_(self.w_coarse_dec.T)
 
-        # Initialize subspace frames
+        # Initialize primary and rotation basis vectors with Kaiming uniform
         nn.init.kaiming_uniform_(self.w_dec, nonlinearity="linear")
-        nn.init.kaiming_uniform_(self.w_rot, nonlinearity="linear")
+        if self.subspace_rank > 1 and self.w_rot is not None:
+            nn.init.kaiming_uniform_(self.w_rot, nonlinearity="linear")
         self.normalize_decoder_weights()
 
         nn.init.zeros_(self.b_enc)
         nn.init.zeros_(self.b_dec)
+
+    def _get_subspace_basis(self) -> torch.Tensor:
+        """
+        Returns unified subspace basis tensor of shape (d_sae, subspace_rank, d_in).
+        """
+        if self.subspace_rank == 1 or self.w_rot is None:
+            return self.w_dec.unsqueeze(1)
+        return torch.cat([self.w_dec.unsqueeze(1), self.w_rot], dim=1)
 
     def get_decoder_weights(self) -> torch.Tensor:
         """
@@ -94,17 +108,34 @@ class SphericalTreeSASA(BaseSAE):
     @torch.no_grad()
     def normalize_decoder_weights(self, eps: float = 1e-8, **kwargs) -> None:
         """
-        Enforces unit-norm constraints on coarse centroids and fine subspace basis vectors.
+        Enforces unit-norm constraints on coarse centroids and in-place Gram-Schmidt
+        orthonormalization on the Stiefel manifold for all N-dimensional subspace frames.
         """
         self.w_coarse_dec.div_(self.w_coarse_dec.norm(dim=-1, keepdim=True) + eps)
+        
+        # 1. Normalize primary decoder basis w_dec
         self.w_dec.div_(self.w_dec.norm(dim=-1, keepdim=True) + eps)
-        self.w_rot.div_(self.w_rot.norm(dim=-1, keepdim=True) + eps)
+        
+        # 2. Orthonormalize rotation bases against primary and preceding bases
+        if self.subspace_rank > 1 and self.w_rot is not None:
+            for r in range(self.subspace_rank - 1):
+                v = self.w_rot[:, r, :].clone()
+                # Project out w_dec
+                proj_dec = (v * self.w_dec).sum(dim=-1, keepdim=True) * self.w_dec
+                v = v - proj_dec
+                # Project out preceding rot bases
+                for prev_r in range(r):
+                    u = self.w_rot[:, prev_r, :]
+                    proj_rot = (v * u).sum(dim=-1, keepdim=True) * u
+                    v = v - proj_rot
+                v.div_(v.norm(dim=-1, keepdim=True) + eps)
+                self.w_rot[:, r, :].copy_(v)
 
     def encode(
         self,
         x: torch.Tensor,
         return_pre_acts: bool = False
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         x_centered = x - self.b_dec
         token_norm = torch.norm(x_centered, p=2, dim=-1, keepdim=True) + 1e-8
         
@@ -119,14 +150,17 @@ class SphericalTreeSASA(BaseSAE):
         coarse_acts = torch.zeros_like(coarse_sim)
         coarse_acts.scatter_(dim=-1, index=topk_coarse_idx, src=F.relu(topk_coarse_val))
 
-        # 3. Stage 2: Fine 2D Subspace Grassmannian Energy Evaluation
-        # Project x_unit along primary basis (w_dec) and orthogonal rotation (w_rot)
-        proj_1 = torch.matmul(x_unit, self.w_dec.T)  # (..., d_sae)
-        proj_2 = torch.matmul(x_unit, self.w_rot.T)  # (..., d_sae)
+        # 3. Stage 2: Generalized N-Dimensional Subspace Grassmannian Projection
+        w_sub = self._get_subspace_basis()
+        # coords: (..., d_sae, subspace_rank)
+        coords = torch.einsum('...d, sid -> ...si', x_unit, w_sub)
         
-        # Grassmannian subspace cosine projection magnitude in [0, 1]
-        subspace_energy = torch.sqrt(proj_1 ** 2 + proj_2 ** 2 + 1e-12)
-        raw_pre_acts = subspace_energy + self.b_enc
+        # Grassmannian subspace energy in [0, 1]
+        subspace_energy = torch.norm(coords, p=2, dim=-1)  # (..., d_sae)
+        
+        # Bounded geometric bias prevents runaway negative drift
+        eff_b_enc = 0.5 * torch.tanh(self.b_enc)
+        raw_pre_acts = subspace_energy + eff_b_enc
         pre_acts = F.relu(raw_pre_acts)
 
         orig_shape = pre_acts.shape
@@ -146,16 +180,20 @@ class SphericalTreeSASA(BaseSAE):
             f_unit = torch.zeros_like(pre_acts)
             f_unit.scatter_(dim=-1, index=idx, src=val)
 
-        # 5. Modulate sparse cosine firings by original token norm for lossless scale
+        # Modulate full coordinate tensor by sparse firing ratio
+        scale_mod = (f_unit / (subspace_energy + 1e-8)).unsqueeze(-1)  # (..., d_sae, 1)
+        sparse_coords = coords * scale_mod  # (..., d_sae, subspace_rank)
+
+        # Primary scalar activation for downstream interpretability
         f = f_unit * token_norm
 
         if return_pre_acts:
-            return f, coarse_acts, raw_pre_acts, proj_1, proj_2, token_norm
+            return f, coarse_acts, raw_pre_acts, coords, sparse_coords, token_norm
         return f
 
     def decode(self, f: torch.Tensor) -> torch.Tensor:
         """
-        Reconstructs signal from active subspace frames.
+        Standard 1D decoder projection interface.
         """
         return torch.matmul(f, self.w_dec) + self.b_dec
 
@@ -167,37 +205,56 @@ class SphericalTreeSASA(BaseSAE):
         **kwargs
     ) -> DictionaryOutput:
         target = target if target is not None else x
-        f, coarse_acts, raw_pre_acts, proj_1, proj_2, token_norm = self.encode(x, return_pre_acts=True)
+        f, coarse_acts, raw_pre_acts, coords, sparse_coords, token_norm = self.encode(x, return_pre_acts=True)
+        w_sub = self._get_subspace_basis()
         
-        # Primary fine reconstruction
-        x_hat = self.decode(f)
+        # 1. Exact Lossless N-Dimensional Tensor Reconstruction
+        x_hat = token_norm * torch.einsum('...si, sid -> ...d', sparse_coords, w_sub) + self.b_dec
         mse_loss = F.mse_loss(x_hat, target)
 
         loss_dict = {"mse_loss": mse_loss}
         total_loss = mse_loss
 
-        # 1. Coarse Auxiliary Loss (guides parent centroid discovery)
+        # 2. Coarse Auxiliary Loss (guides parent centroid discovery)
         coarse_recon = torch.matmul(coarse_acts * token_norm, self.w_coarse_dec) + self.b_dec
         coarse_loss = self.coarse_loss_coeff * F.mse_loss(coarse_recon, target)
         total_loss = total_loss + coarse_loss
         loss_dict["coarse_loss"] = coarse_loss
 
-        # 2. Subspace Orthogonality Regularization (ensures w_dec and w_rot are orthogonal)
-        ortho_dot = (self.w_dec * self.w_rot).sum(dim=-1)  # (d_sae,)
-        ortho_loss = self.ortho_loss_coeff * torch.mean(ortho_dot ** 2)
-        total_loss = total_loss + ortho_loss
-        loss_dict["ortho_loss"] = ortho_loss
+        # 3. Subspace Orthogonality Loss (regularizer across multi-basis directions)
+        if self.subspace_rank > 1 and self.w_rot is not None:
+            # Inner products between distinct basis vectors within each subspace
+            basis_gram = torch.einsum('sid, sjd -> sij', w_sub, w_sub)  # (d_sae, rank, rank)
+            diag_mask = torch.eye(self.subspace_rank, device=x.device, dtype=torch.bool).unsqueeze(0)
+            off_diag = basis_gram.masked_select(~diag_mask)
+            ortho_loss = self.ortho_loss_coeff * torch.mean(off_diag ** 2)
+            total_loss = total_loss + ortho_loss
+            loss_dict["ortho_loss"] = ortho_loss
 
-        # 3. OpenAI Softplus Auxiliary Loss for Dead Latents
+        # 4. Continuous Subspace Auxiliary Residual Loss for Dead Latents (Anti-Death Engine)
         if dead_mask is not None and dead_mask.any() and self.aux_loss_coeff > 0:
             residual = target - x_hat
-            dead_pre_acts = F.softplus(raw_pre_acts) * dead_mask.float()
-            dead_k = min(self.k, int(dead_mask.sum().item()))
-            if dead_k > 0:
-                dead_val, dead_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)
-                dead_f = torch.zeros_like(dead_pre_acts)
-                dead_f.scatter_(dim=-1, index=dead_idx, src=dead_val)
-                aux_recon = torch.matmul(dead_f * token_norm, self.w_dec)
+            dead_indices = torch.where(dead_mask)[0]
+            num_dead = len(dead_indices)
+            
+            if num_dead > 0:
+                dead_w = w_sub[dead_indices]  # (num_dead, subspace_rank, d_in)
+                # Project residual onto dead subspace frames
+                dead_coords = torch.einsum('...d, sid -> ...si', residual / (token_norm + 1e-8), dead_w)
+                dead_energy = torch.norm(dead_coords, p=2, dim=-1)  # (..., num_dead)
+                
+                eff_b_enc = 0.5 * torch.tanh(self.b_enc)
+                dead_pre_acts = F.softplus(dead_energy + eff_b_enc[dead_indices])
+                
+                dead_k = min(self.k, num_dead)
+                dead_val, dead_topk_idx = torch.topk(dead_pre_acts, k=dead_k, dim=-1)
+                dead_mask_topk = torch.zeros_like(dead_pre_acts)
+                dead_mask_topk.scatter_(dim=-1, index=dead_topk_idx, src=dead_val)
+                
+                dead_scale = (dead_mask_topk / (dead_energy + 1e-8)).unsqueeze(-1)
+                dead_sparse_coords = dead_coords * dead_scale
+                
+                aux_recon = token_norm * torch.einsum('...si, sid -> ...d', dead_sparse_coords, dead_w)
                 aux_loss = self.aux_loss_coeff * F.mse_loss(aux_recon, residual)
                 total_loss = total_loss + aux_loss
                 loss_dict["aux_loss"] = aux_loss
