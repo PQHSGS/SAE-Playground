@@ -81,26 +81,24 @@ def load_model_and_tokenizer(
 
 
 def _load_planckgpt_fallback(model_name_or_path: str, dtype: torch.dtype, device_map: str):
-    import sys
     from huggingface_hub import hf_hub_download
-    
-    code_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../Code/planckgpt_code"))
-    if code_path not in sys.path:
-        sys.path.insert(0, code_path)
-
-    from model.core import GPT
+    from src.utils.planck_gpt import PlanckGPT
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = GPT(options={
-        "d_model": 896,
-        "num_layers": 14,
-        "num_heads": 7,
-        "device": torch.device(device),
-    })
+    model = PlanckGPT(
+        vocab_size=50257,
+        d_model=896,
+        num_layers=14,
+        num_heads=7,
+        head_dim=128,
+        d_ff=3584,
+    )
 
     # Download raw weights from HF
     weight_path = hf_hub_download("cattonpm/PlanckGPT-v0.10.0", "planckgpt.pth")
-    model.load(weight_path)
+    checkpoint = torch.load(weight_path, map_location="cpu", weights_only=False)
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    model.load_state_dict(state_dict)
     model.to(device=device, dtype=dtype)
     model.eval()
 
