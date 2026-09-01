@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import torch
 from aiohttp import web
 
@@ -19,6 +19,16 @@ class DashboardState:
     loaded_dictionaries: Dict[str, torch.nn.Module] = {}
     unembedding_weights: Optional[torch.Tensor] = None
     feature_metadata: Dict[str, Dict[int, Dict]] = {}  # {hook_point: {feat_id: meta}}
+    sample_contexts: List[str] = [
+        "The Eiffel Tower in Paris, France stands on the Champ de Mars near the Seine river.",
+        "Quantum mechanics reveals that particles exist in probabilistic superposition wavefunctions.",
+        "In deep learning, transformer self-attention enables global contextual token representations.",
+        "def quicksort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [x for x in arr if x == pivot] + quicksort([x for x in arr if x > pivot])",
+        "The Supreme Court declared the federal law unconstitutional under the Fourteenth Amendment.",
+        "Photosynthesis converts carbon dioxide and sunlight into glucose and oxygen molecules in chloroplasts.",
+        "The economic inflation rate rose sharply due to supply chain bottlenecks and monetary policy changes.",
+        "Machine learning algorithms optimize loss functions using stochastic gradient descent and backpropagation."
+    ]
 
     @property
     def dictionary_model(self) -> Optional[torch.nn.Module]:
@@ -49,6 +59,47 @@ def get_or_load_dictionary(layer: str) -> Optional[torch.nn.Module]:
     dict_model = cls.from_pretrained(subfolder, device=device)
     state.loaded_dictionaries[layer] = dict_model
     return dict_model
+
+
+def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, feature_id: int) -> List[Dict]:
+    """Computes or retrieves top activating context snippets with token-level activation values."""
+    if state.model is None or state.tokenizer is None:
+        return []
+
+    meta = state.feature_metadata.get(target_layer, {}).get(feature_id, {})
+    if "snippets" in meta and meta["snippets"]:
+        return meta["snippets"]
+
+    snippets = []
+    device = state.model.device if hasattr(state.model, "device") else ("cuda" if torch.cuda.is_available() else "cpu")
+    hook_mgr = HookManager(state.model)
+    hook_mgr.register_forward_hooks([target_layer])
+
+    with torch.no_grad():
+        for text in state.sample_contexts:
+            inputs = state.tokenizer(text, return_tensors="pt").to(device)
+            _ = state.model(**inputs)
+            act = hook_mgr.activations[target_layer][0]
+            f = dict_model.encode(act)  # (seq_len, d_sae)
+
+            feat_acts = f[:, feature_id].tolist()
+            max_act = max(feat_acts) if feat_acts else 0.0
+
+            tokens = [
+                {"token": state.tokenizer.decode([tid]), "act": float(a)}
+                for tid, a in zip(inputs["input_ids"][0], feat_acts)
+            ]
+
+            snippets.append({
+                "context_text": text,
+                "max_activation": float(max_act),
+                "tokens": tokens
+            })
+
+    hook_mgr.remove_hooks()
+    # Sort snippets by max activation descending
+    snippets.sort(key=lambda s: s["max_activation"], reverse=True)
+    return snippets[:4]
 
 
 async def health_handler(request: web.Request) -> web.Response:
@@ -127,7 +178,7 @@ async def features_handler(request: web.Request) -> web.Response:
     })
 
 
-async def feature_logits_handler(request: web.Request) -> web.Response:
+async def feature_details_handler(request: web.Request) -> web.Response:
     feature_id = int(request.match_info["feature_id"])
     top_k = int(request.query.get("top_k", 10))
     target_layer = request.query.get("layer") or state.active_hook_point
@@ -147,10 +198,18 @@ async def feature_logits_handler(request: web.Request) -> web.Response:
         top_k=top_k,
     )
     meta = state.feature_metadata.get(target_layer, {}).get(feature_id, {})
+    snippets = get_top_activating_snippets(dict_model, target_layer, feature_id)
+
+    max_act = meta.get("max_activation", max([s["max_activation"] for s in snippets] + [0.0]))
+    firing_rate = meta.get("firing_rate", 0.001)
+
     return web.json_response({
         "feature_id": feature_id,
         "layer": target_layer,
         "explanation": meta.get("explanation", f"Feature #{feature_id}"),
+        "max_activation": float(max_act),
+        "firing_rate": float(firing_rate),
+        "snippets": snippets,
         "promoted_tokens": promoted,
         "suppressed_tokens": suppressed,
     })
@@ -242,7 +301,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/layers", layers_handler)
     app.router.add_post("/api/select_layer", select_layer_handler)
     app.router.add_get("/api/features", features_handler)
-    app.router.add_get("/api/feature/{feature_id}/logits", feature_logits_handler)
+    app.router.add_get("/api/feature/{feature_id}", feature_details_handler)
+    app.router.add_get("/api/feature/{feature_id}/logits", feature_details_handler)
     app.router.add_post("/api/steer", steer_handler)
     app.router.add_post("/api/analyze", analyze_text_handler)
 

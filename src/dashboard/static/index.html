@@ -6,65 +6,114 @@
   <title>Neuronpedia Interpretability Playground</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="app-container">
+    <!-- Header -->
     <header class="app-header">
       <div class="logo-section">
         <span class="logo-icon">⚡</span>
         <h1>Neuronpedia <span class="badge">Playground</span></h1>
+        <span class="model-tag" id="current-model-tag">gemma-3-270m</span>
       </div>
-      <div class="status-section">
-        <span id="status-dot" class="dot dot-online"></span>
-        <span id="status-text">Backend Connected</span>
+      <div class="header-controls">
+        <div class="status-section">
+          <span id="status-dot" class="dot dot-online"></span>
+          <span id="status-text">Backend Connected</span>
+        </div>
       </div>
     </header>
 
     <div class="main-layout">
       <!-- Sidebar: Feature List & Search -->
       <aside class="sidebar">
-        <div class="layer-selector-box" style="padding: 10px 16px; border-bottom: 1px solid var(--border-color, #27272a);">
-          <label style="font-size: 0.75rem; color: #a1a1aa; display: block; margin-bottom: 4px;">LAYER HOOK POINT</label>
-          <select id="layer-select" style="width: 100%; background: #18181b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 6px; padding: 6px 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; cursor: pointer;"></select>
+        <div class="layer-selector-box">
+          <label>LAYER HOOK POINT</label>
+          <select id="layer-select"></select>
         </div>
         <div class="search-box">
-          <input type="text" id="feature-search" placeholder="Search features or keywords...">
+          <input type="text" id="feature-search" placeholder="Search features by keyword or ID...">
         </div>
         <div class="feature-list-header">
-          <span>Feature Index</span>
+          <span>FEATURE CATALOG</span>
           <span class="count-badge" id="total-count">0 Features</span>
         </div>
         <div class="feature-list" id="feature-list">
-          <div class="loading">Loading features...</div>
+          <div class="loading">Loading feature catalog...</div>
         </div>
       </aside>
 
       <!-- Main Content Area -->
       <main class="content">
         <div class="tabs">
-          <button class="tab-btn active" data-tab="tab-inspect">Feature Inspector & Logits</button>
+          <button class="tab-btn active" data-tab="tab-inspect">Feature Details & Context</button>
           <button class="tab-btn" data-tab="tab-analyze">Live Prompt Analyzer</button>
           <button class="tab-btn" data-tab="tab-steer">Causal Steering Sandbox</button>
         </div>
 
-        <!-- Tab 1: Feature Inspector -->
+        <!-- Tab 1: Feature Inspector (Neuronpedia Signature Layout) -->
         <section id="tab-inspect" class="tab-pane active">
-          <div class="card">
-            <h2 id="inspect-title">Select a feature to inspect</h2>
-            <p id="inspect-explanation" class="explanation-text">Explanations and direct logit attributions will appear here.</p>
+          <!-- Feature Hero Header -->
+          <div class="card hero-card">
+            <div class="hero-top">
+              <div>
+                <span class="layer-badge" id="hero-layer-badge">model.layers.9</span>
+                <h2 id="inspect-title">Select a feature</h2>
+              </div>
+              <div class="stat-pills">
+                <div class="stat-pill">
+                  <span class="stat-label">MAX ACTIVATION</span>
+                  <span class="stat-val" id="stat-max-act">--</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-label">FIRING RATE</span>
+                  <span class="stat-val" id="stat-firing-rate">--</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-label">DECODER NORM</span>
+                  <span class="stat-val">1.00</span>
+                </div>
+              </div>
+            </div>
+            <div class="explanation-box">
+              <span class="explanation-tag">AUTO-INTERPRETATION LABEL</span>
+              <p id="inspect-explanation" class="explanation-text">Select any feature from the catalog on the left to inspect its activating contexts and direct logit attributions.</p>
+            </div>
           </div>
 
+          <!-- Feature 1: Top Activating Dataset Examples (Context Snippets) -->
+          <div class="card">
+            <div class="card-header-flex">
+              <div>
+                <h3>Top Activating Dataset Examples (Context Snippets)</h3>
+                <p class="subtext">Tokens with non-zero activations are highlighted proportional to strength. Hover over any token to inspect its activation value.</p>
+              </div>
+            </div>
+            <div id="snippets-container" class="snippets-grid">
+              <div class="empty-msg">No feature selected</div>
+            </div>
+          </div>
+
+          <!-- Feature 2: Direct Logit Attribution (Logit Lens) -->
           <div class="grid-2">
             <div class="card">
-              <h3>Direct Logit Attribution (Promoted Tokens)</h3>
+              <div class="card-header-flex">
+                <h3>Direct Logit Attribution (Promoted Tokens)</h3>
+                <span class="logit-badge pos">+ Δ Logit</span>
+              </div>
+              <p class="subtext">Tokens promoted most strongly when this feature fires (W_dec · W_U^T).</p>
               <div id="promoted-list" class="token-logit-list">
                 <div class="empty-msg">No feature selected</div>
               </div>
             </div>
 
             <div class="card">
-              <h3>Direct Logit Attribution (Suppressed Tokens)</h3>
+              <div class="card-header-flex">
+                <h3>Direct Logit Attribution (Suppressed Tokens)</h3>
+                <span class="logit-badge neg">- Δ Logit</span>
+              </div>
+              <p class="subtext">Tokens suppressed most strongly when this feature fires (W_dec · W_U^T).</p>
               <div id="suppressed-list" class="token-logit-list">
                 <div class="empty-msg">No feature selected</div>
               </div>
@@ -75,7 +124,8 @@
         <!-- Tab 2: Live Prompt Analyzer -->
         <section id="tab-analyze" class="tab-pane">
           <div class="card">
-            <h3>Analyze Custom Prompt Feature Activations</h3>
+            <h3>Live Prompt Feature Activation Analyzer</h3>
+            <p class="subtext">Enter any sentence to compute token-level feature activations in real time across the selected layer.</p>
             <textarea id="analyze-input" rows="3" placeholder="Enter text to analyze feature activations across tokens...">The theory of general relativity describes how spacetime bends around massive gravitational bodies.</textarea>
             <button id="btn-analyze" class="primary-btn">Analyze Activations</button>
           </div>
@@ -111,7 +161,7 @@
             <button id="btn-steer" class="primary-btn">Generate with Steering</button>
 
             <div id="steer-output" class="steer-output-box hidden">
-              <h4>Generated Text:</h4>
+              <h4>Steered Model Generation:</h4>
               <p id="steered-text"></p>
             </div>
           </div>
