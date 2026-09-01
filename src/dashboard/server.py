@@ -80,7 +80,10 @@ def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, 
             inputs = state.tokenizer(text, return_tensors="pt").to(device)
             _ = state.model(**inputs)
             act = hook_mgr.activations[target_layer][0]
-            f = dict_model.encode(act)  # (seq_len, d_sae)
+            scale = (dict_model.d_in ** 0.5) / (act.norm(dim=-1, keepdim=True) + 1e-8)
+            normed_act = (act * scale).to(device=dict_model.get_decoder_weights().device, dtype=dict_model.get_decoder_weights().dtype)
+            dict_model.eval()
+            f = dict_model.encode(normed_act)  # (seq_len, d_sae)
 
             feat_acts = f[:, feature_id].tolist()
             max_act = max(feat_acts) if feat_acts else 0.0
@@ -276,7 +279,11 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
     with torch.no_grad():
         _ = state.model(**inputs)
         act = hook_mgr.activations[target_layer][0]
-        f = dict_model.encode(act)  # (seq_len, d_sae)
+        # Match training-time activation normalization (scale = sqrt(d_in) / norm)
+        scale = (dict_model.d_in ** 0.5) / (act.norm(dim=-1, keepdim=True) + 1e-8)
+        normed_act = (act * scale).to(device=dict_model.get_decoder_weights().device, dtype=dict_model.get_decoder_weights().dtype)
+        dict_model.eval()
+        f = dict_model.encode(normed_act)  # (seq_len, d_sae)
 
     hook_mgr.remove_hooks()
     token_ids = inputs["input_ids"][0].tolist()
