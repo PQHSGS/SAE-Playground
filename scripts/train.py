@@ -99,7 +99,15 @@ def main():
         device=device,
     )
     sample_batch = probe_buffer.next_batch()
-    if isinstance(sample_batch, (tuple, list)):
+    if isinstance(sample_batch, dict):
+        first_item = next(iter(sample_batch.values()))
+        if isinstance(first_item, (tuple, list)):
+            d_in = first_item[0].shape[-1]
+            d_out = first_item[1].shape[-1]
+        else:
+            d_in = first_item.shape[-1]
+            d_out = d_in
+    elif isinstance(sample_batch, (tuple, list)):
         d_in = sample_batch[0].shape[-1]
         d_out = sample_batch[1].shape[-1]
     else:
