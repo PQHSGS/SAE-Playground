@@ -67,7 +67,7 @@ def main():
         multi_dict = MultiLayerDictionary.from_pretrained(checkpoint_dir, device=device)
         hook_points = list(multi_dict.hook_point_map.values())
     else:
-        with open(os.path.join(checkpoint_dir, "config.json"), "r") as f:
+        with open(os.path.join(checkpoint_dir, "config.json"), "r", encoding="utf-8") as f:
             dict_cfg = json.load(f)
         cls_name = dict_cfg.get("class_name", "TopKSAE")
         sae = get_dictionary_cls(cls_name).from_pretrained(checkpoint_dir, device=device)

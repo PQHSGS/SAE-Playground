@@ -109,7 +109,7 @@ def main():
     layer_map = {}
     multi_cfg_file = os.path.join(checkpoint_dir, "multi_sae_config.json")
     if os.path.exists(multi_cfg_file):
-        with open(multi_cfg_file, "r") as f:
+        with open(multi_cfg_file, "r", encoding="utf-8") as f:
             multi_cfg = json.load(f)
         for hp in multi_cfg.get("hook_points", []):
             subpath = os.path.join(checkpoint_dir, hp.replace(".", "_"))
@@ -147,7 +147,7 @@ def main():
         print(f"\n[{layer_idx}/{len(layer_map)}] Processing layer '{hook_point}' from {layer_subpath}...")
         
         cfg_file = os.path.join(layer_subpath, "config.json")
-        with open(cfg_file, "r") as f:
+        with open(cfg_file, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         cls_name = cfg.get("class_name", "BatchTopKSAE")
         cls = get_dictionary_cls(cls_name)

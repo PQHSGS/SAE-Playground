@@ -71,7 +71,7 @@ def main():
     if checkpoint_dir and os.path.exists(checkpoint_dir):
         multi_cfg_file = os.path.join(checkpoint_dir, "multi_sae_config.json")
         if os.path.exists(multi_cfg_file):
-            with open(multi_cfg_file, "r") as f:
+            with open(multi_cfg_file, "r", encoding="utf-8") as f:
                 multi_cfg = json.load(f)
             layer_hooks = multi_cfg.get("hook_points", [])
             for hp in layer_hooks:
@@ -113,7 +113,7 @@ def main():
     # 4. Activate initial hook point
     if hook_point in state.available_layers:
         subfolder = state.available_layers[hook_point]
-        with open(os.path.join(subfolder, "config.json"), "r") as f:
+        with open(os.path.join(subfolder, "config.json"), "r", encoding="utf-8") as f:
             cfg = json.load(f)
         cls = get_dictionary_cls(cfg.get("class_name", "TopKSAE"))
         state.loaded_dictionaries[hook_point] = cls.from_pretrained(subfolder, device=args.device)
