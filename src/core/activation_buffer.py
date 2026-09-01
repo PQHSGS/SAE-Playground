@@ -133,9 +133,14 @@ class ActivationBuffer:
             if self.mask_bos and attention_mask.shape[1] > 1:
                 attention_mask[:, 0] = False
 
-            base_model = getattr(self.model, "model", getattr(self.model, "transformer", self.model))
+            # Use inner model if available to bypass lm_head, else invoke self.model directly
+            if hasattr(self.model, "model") and isinstance(self.model.model, nn.Module) and not isinstance(self.model.model, nn.ModuleList):
+                runner = self.model.model
+            else:
+                runner = self.model
+
             with torch.autocast(device_type="cuda" if "cuda" in str(self.device) else "cpu", dtype=self.dtype):
-                _ = base_model(input_ids=input_ids, attention_mask=encodings["attention_mask"])
+                _ = runner(input_ids=input_ids, attention_mask=encodings["attention_mask"])
 
             mask = attention_mask.view(-1)
             for hp in self.all_hook_points:

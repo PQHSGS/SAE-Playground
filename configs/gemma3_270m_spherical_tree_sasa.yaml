@@ -1,0 +1,54 @@
+# Gemma 3 270M SphericalTreeSASA Full Architecture Training Config (All 18 Depth Layers Simultaneously)
+model_name_or_path: "google/gemma-3-270m"
+torch_dtype: "bfloat16"
+load_in_4bit: false
+context_length: 512
+mask_bos: true
+normalize_activations: true
+
+# Train all 18 layers simultaneously from 1 forward pass
+hook_points:
+  - "model.layers.0"
+  - "model.layers.1"
+  - "model.layers.2"
+  - "model.layers.3"
+  - "model.layers.4"
+  - "model.layers.5"
+  - "model.layers.6"
+  - "model.layers.7"
+  - "model.layers.8"
+  - "model.layers.9"
+  - "model.layers.10"
+  - "model.layers.11"
+  - "model.layers.12"
+  - "model.layers.13"
+  - "model.layers.14"
+  - "model.layers.15"
+  - "model.layers.16"
+  - "model.layers.17"
+
+architecture: "spherical_tree_sasa"
+expansion_factor: 8          # d_sae = 640 * 8 = 5,120 features per layer
+num_coarse: 64               # 64 coarse parent concept centroids
+subspace_rank: 2             # 2D orthogonal rotational subspace per leaf
+k: 32                        # BatchTopK global sparsity budget per layer
+k_coarse: 8                  # Top-8 active parent categories per token
+coarse_loss_coeff: 0.25      # Tree coarse branch reconstruction loss
+ortho_loss_coeff: 0.0001     # Subspace frame orthogonality regularizer
+aux_loss_coeff: 0.03125      # OpenAI Softplus Aux Loss for dead leaves
+
+dataset_path: "HuggingFaceFW/fineweb-edu"
+dataset_name: "sample-10BT"
+dataset_split: "train"
+batch_size: 4096
+learning_rate: 0.0003
+min_learning_rate: 0.00001
+lr_warmup_steps: 1500
+total_steps: 25000
+checkpoint_steps: 2500
+dead_feature_threshold: 1000000
+use_ghost_grads: true
+ghost_grad_coeff: 0.05
+output_dir: "checkpoints/gemma3_270m_spherical_tree_sasa"
+wandb_project: "gemma3-270m-sae"
+seed: 42
