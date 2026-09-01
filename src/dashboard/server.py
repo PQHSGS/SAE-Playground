@@ -265,6 +265,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/feature/{feature_id}/logits", feature_logits_handler)
     app.router.add_post("/api/steer", steer_handler)
     app.router.add_post("/api/analyze_text", analyze_text_handler)
+    app.router.add_post("/api/analyze", analyze_text_handler)
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.exists(static_dir):
