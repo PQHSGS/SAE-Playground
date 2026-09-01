@@ -28,14 +28,14 @@ hook_points:
   - "model.layers.17"
 
 architecture: "spherical_tree_sasa"
-expansion_factor: 8          # d_sae = 640 * 8 = 5,120 features per layer
+expansion_factor: 4          # 4x Expansion (d_sae = 640 * 4 = 2,560 leaves, 5,120 effective subspace basis directions)
 num_coarse: 64               # 64 coarse parent concept centroids
-subspace_rank: 2             # 2D orthogonal rotational subspace per leaf
+subspace_rank: 2             # 2D orthogonal rotational subspace per leaf (w_dec, w_rot)
 k: 32                        # BatchTopK global sparsity budget per layer
 k_coarse: 8                  # Top-8 active parent categories per token
-coarse_loss_coeff: 0.25      # Tree coarse branch reconstruction loss
-ortho_loss_coeff: 0.0001     # Subspace frame orthogonality regularizer
-aux_loss_coeff: 0.03125      # OpenAI Softplus Aux Loss for dead leaves
+coarse_loss_coeff: 0.10      # Tuned coarse loss to prevent parent centroids from over-absorbing fine leaf variance
+ortho_loss_coeff: 0.0001     # Subspace frame orthogonality regularizer (w_dec ⟂ w_rot)
+aux_loss_coeff: 0.03125      # OpenAI Softplus Aux Loss for dead leaves (1/32)
 
 dataset_path: "HuggingFaceFW/fineweb-edu"
 dataset_name: "sample-10BT"
