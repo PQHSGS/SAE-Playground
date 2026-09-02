@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSearch();
   initSteeringControls();
   initAnalyze();
+  initAttributionGraph();
 });
 
 function initTabs() {
@@ -454,3 +455,338 @@ window.jumpToFeature = function(featureId) {
     heroCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 };
+
+/* =========================================================================
+   Tab 4: Anthropic Attribution Graph (Circuit Tracing)
+   ========================================================================= */
+function initAttributionGraph() {
+  const promptInput = document.getElementById("graph-prompt");
+  const tauSlider = document.getElementById("graph-tau");
+  const tauVal = document.getElementById("graph-tau-val");
+  const maxNodesInput = document.getElementById("graph-max-nodes");
+  const maxEdgesInput = document.getElementById("graph-max-edges");
+  const traceBtn = document.getElementById("btn-trace-graph");
+  const loadingSpan = document.getElementById("graph-loading");
+  const candidatesBox = document.getElementById("graph-candidates-box");
+  const candidatesList = document.getElementById("graph-candidates-list");
+  const metricsCard = document.getElementById("graph-metrics-card");
+  const canvasContainer = document.getElementById("graph-canvas-container");
+  const svg = document.getElementById("attribution-graph-svg");
+  const inspector = document.getElementById("graph-node-inspector");
+  const inspectorClose = document.getElementById("gnode-close");
+
+  let selectedTargetId = null;
+
+  if (tauSlider && tauVal) {
+    tauSlider.addEventListener("input", (e) => {
+      tauVal.innerText = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (inspectorClose && inspector) {
+    inspectorClose.addEventListener("click", () => {
+      inspector.classList.add("hidden");
+    });
+  }
+
+  async function runTrace() {
+    const prompt = promptInput ? promptInput.value.trim() : "";
+    if (!prompt) return;
+
+    if (loadingSpan) loadingSpan.classList.remove("hidden");
+    if (traceBtn) traceBtn.disabled = true;
+
+    try {
+      const res = await fetch("/api/attribution_graph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt,
+          target_token_id: selectedTargetId,
+          pruning_threshold: tauSlider ? parseFloat(tauSlider.value) : 0.80,
+          max_nodes: maxNodesInput ? parseInt(maxNodesInput.value) : 35,
+          max_edges: maxEdgesInput ? parseInt(maxEdgesInput.value) : 45,
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to trace attribution graph.");
+      }
+
+      const data = await res.json();
+      renderAttributionGraph(data);
+    } catch (err) {
+      alert("Attribution Graph Error: " + err.message);
+    } finally {
+      if (loadingSpan) loadingSpan.classList.add("hidden");
+      if (traceBtn) traceBtn.disabled = false;
+    }
+  }
+
+  if (traceBtn) {
+    traceBtn.addEventListener("click", () => {
+      selectedTargetId = null;
+      runTrace();
+    });
+  }
+
+  function renderAttributionGraph(data) {
+    // 1. Populate Metrics
+    const targetEl = document.getElementById("graph-metric-target");
+    const probEl = document.getElementById("graph-metric-prob");
+    const sizeEl = document.getElementById("graph-metric-size");
+    const compEl = document.getElementById("graph-metric-comp");
+
+    if (targetEl) targetEl.innerText = `"${data.target_token.trim()}"`;
+    if (probEl) probEl.innerText = `${(data.target_prob * 100).toFixed(1)}%`;
+    if (sizeEl) sizeEl.innerText = `${data.nodes.length} Nodes, ${data.edges.length} Edges`;
+    if (compEl && data.metrics) {
+      compEl.innerText = `${(data.metrics.completeness_score * 100).toFixed(1)}%`;
+    }
+
+    if (metricsCard) metricsCard.classList.remove("hidden");
+    if (canvasContainer) canvasContainer.classList.remove("hidden");
+
+    // 2. Candidate Prediction Pills
+    if (candidatesBox && candidatesList && data.candidates && data.candidates.length > 0) {
+      candidatesBox.classList.remove("hidden");
+      candidatesList.innerHTML = "";
+      data.candidates.forEach(cand => {
+        const pill = document.createElement("button");
+        const isSelected = cand.id === data.target_token_id;
+        pill.className = "tab-btn";
+        pill.style.padding = "4px 10px";
+        pill.style.fontSize = "12px";
+        pill.style.fontFamily = "'JetBrains Mono', monospace";
+        pill.style.background = isSelected ? "var(--accent)" : "rgba(255,255,255,0.06)";
+        pill.style.color = isSelected ? "#fff" : "var(--text)";
+        pill.innerText = `"${cand.token.trim()}" (${(cand.prob * 100).toFixed(1)}%)`;
+
+        pill.addEventListener("click", () => {
+          selectedTargetId = cand.id;
+          runTrace();
+        });
+        candidatesList.appendChild(pill);
+      });
+    }
+
+    // 3. Layout DAG in SVG
+    if (!svg) return;
+    svg.innerHTML = "";
+
+    // Group nodes by layer_idx
+    const layerGroups = {};
+    data.nodes.forEach(n => {
+      const l = n.layer_idx;
+      if (!layerGroups[l]) layerGroups[l] = [];
+      layerGroups[l].push(n);
+    });
+
+    const sortedLayers = Object.keys(layerGroups).map(Number).sort((a, b) => a - b);
+    const colWidth = 220;
+    const nodeWidth = 170;
+    const nodeHeight = 54;
+    const vertGap = 16;
+    const startX = 40;
+    const startY = 40;
+
+    let maxNodesInCol = 0;
+    sortedLayers.forEach(l => {
+      if (layerGroups[l].length > maxNodesInCol) {
+        maxNodesInCol = layerGroups[l].length;
+      }
+    });
+
+    const totalWidth = Math.max(920, startX * 2 + (sortedLayers.length - 1) * colWidth + nodeWidth);
+    const totalHeight = Math.max(540, startY * 2 + maxNodesInCol * (nodeHeight + vertGap));
+
+    svg.setAttribute("viewBox", `0 0 ${totalWidth} ${totalHeight}`);
+    svg.style.width = `${totalWidth}px`;
+    svg.style.height = `${totalHeight}px`;
+
+    // Calculate node coordinates (x, y)
+    const nodeCoords = {};
+    sortedLayers.forEach((l, colIdx) => {
+      const nodesInCol = layerGroups[l];
+      const colX = startX + colIdx * colWidth;
+      const colHeight = nodesInCol.length * (nodeHeight + vertGap) - vertGap;
+      const colStartY = Math.max(startY, (totalHeight - colHeight) / 2);
+
+      nodesInCol.forEach((n, rowIdx) => {
+        const y = colStartY + rowIdx * (nodeHeight + vertGap);
+        nodeCoords[n.id] = {
+          x: colX,
+          y: y,
+          w: nodeWidth,
+          h: nodeHeight,
+          node: n,
+        };
+      });
+    });
+
+    // 4. Render Column Headers
+    sortedLayers.forEach((l, colIdx) => {
+      const colX = startX + colIdx * colWidth;
+      const header = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      header.setAttribute("x", colX + nodeWidth / 2);
+      header.setAttribute("y", 24);
+      header.setAttribute("text-anchor", "middle");
+      header.setAttribute("fill", "#64748b");
+      header.setAttribute("font-size", "11px");
+      header.setAttribute("font-weight", "700");
+      header.setAttribute("letter-spacing", "0.05em");
+      header.textContent = l === -1 ? "INPUT TOKENS" : (l === sortedLayers[sortedLayers.length - 1] ? "TARGET LOGIT" : `LAYER ${l}`);
+      svg.appendChild(header);
+    });
+
+    // 5. Render Edges (Curved Bezier Paths)
+    const maxWeight = Math.max(...data.edges.map(e => e.weight), 1e-4);
+    const edgeElements = [];
+
+    data.edges.forEach(e => {
+      const s = nodeCoords[e.source];
+      const t = nodeCoords[e.target];
+      if (!s || !t) return;
+
+      const sx = s.x + s.w;
+      const sy = s.y + s.h / 2;
+      const tx = t.x;
+      const ty = t.y + t.h / 2;
+
+      const normW = Math.max(0.1, Math.min(1.0, e.weight / maxWeight));
+      const strokeW = Math.max(1.5, normW * 5.5);
+      const alpha = Math.max(0.2, normW * 0.85);
+
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const c1x = sx + (tx - sx) * 0.5;
+      const c1y = sy;
+      const c2x = sx + (tx - sx) * 0.5;
+      const c2y = ty;
+
+      path.setAttribute("d", `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", `rgba(139, 92, 246, ${alpha})`);
+      path.setAttribute("stroke-width", strokeW);
+      path.setAttribute("data-source", e.source);
+      path.setAttribute("data-target", e.target);
+      path.classList.add("circuit-edge");
+
+      svg.appendChild(path);
+      edgeElements.push({ path, source: e.source, target: e.target });
+    });
+
+    // 6. Render Nodes
+    data.nodes.forEach(n => {
+      const c = nodeCoords[n.id];
+      if (!c) return;
+
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("class", "circuit-node");
+      g.setAttribute("data-id", n.id);
+      g.style.cursor = "pointer";
+
+      // Pill Background
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", c.x);
+      rect.setAttribute("y", c.y);
+      rect.setAttribute("width", c.w);
+      rect.setAttribute("height", c.h);
+      rect.setAttribute("rx", "6");
+      rect.setAttribute("ry", "6");
+
+      let strokeCol = "#334155";
+      let fillCol = "#0f172a";
+      if (n.node_type === "input_token") {
+        strokeCol = "#3b82f6";
+        fillCol = "#172554";
+      } else if (n.node_type === "logit") {
+        strokeCol = "#10b981";
+        fillCol = "#064e3b";
+      } else {
+        strokeCol = "#8b5cf6";
+        fillCol = "#1e1b4b";
+      }
+
+      rect.setAttribute("fill", fillCol);
+      rect.setAttribute("stroke", strokeCol);
+      rect.setAttribute("stroke-width", "1.5");
+      g.appendChild(rect);
+
+      // Node Label (Token or Feature ID)
+      const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      textLabel.setAttribute("x", c.x + 8);
+      textLabel.setAttribute("y", c.y + 18);
+      textLabel.setAttribute("fill", "#f8fafc");
+      textLabel.setAttribute("font-size", "12px");
+      textLabel.setAttribute("font-family", "'JetBrains Mono', monospace");
+      textLabel.setAttribute("font-weight", "700");
+      textLabel.textContent = n.label.length > 18 ? n.label.substring(0, 16) + "…" : n.label;
+      g.appendChild(textLabel);
+
+      // Node Title (Conceptual Semantic Tag)
+      const textTitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      textTitle.setAttribute("x", c.x + 8);
+      textTitle.setAttribute("y", c.y + 34);
+      textTitle.setAttribute("fill", "#94a3b8");
+      textTitle.setAttribute("font-size", "10px");
+      textTitle.textContent = n.title.length > 22 ? n.title.substring(0, 20) + "…" : n.title;
+      g.appendChild(textTitle);
+
+      // Node Influence / Activation Value
+      const textVal = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      textVal.setAttribute("x", c.x + 8);
+      textVal.setAttribute("y", c.y + 47);
+      textVal.setAttribute("fill", "#a78bfa");
+      textVal.setAttribute("font-size", "9px");
+      textVal.setAttribute("font-family", "'JetBrains Mono', monospace");
+      textVal.textContent = n.node_type === "feature"
+        ? `act: ${n.activation.toFixed(2)} | inf: ${n.logit_influence.toFixed(3)}`
+        : (n.node_type === "input_token" ? `pos: ${n.pos}` : `prob: ${(n.activation * 100).toFixed(1)}%`);
+      g.appendChild(textVal);
+
+      // Interaction: Click to inspect and highlight connected pathways
+      g.addEventListener("click", () => {
+        // Highlight connected edges
+        edgeElements.forEach(({ path, source, target }) => {
+          if (source === n.id) {
+            path.setAttribute("stroke", "#38bdf8"); // Cyan outgoing
+            path.setAttribute("stroke-width", "4");
+          } else if (target === n.id) {
+            path.setAttribute("stroke", "#f59e0b"); // Orange incoming
+            path.setAttribute("stroke-width", "4");
+          } else {
+            path.setAttribute("stroke", "rgba(71, 85, 105, 0.2)");
+            path.setAttribute("stroke-width", "1");
+          }
+        });
+
+        // Open Inspector Drawer
+        if (inspector) {
+          inspector.classList.remove("hidden");
+          const tagEl = document.getElementById("gnode-tag");
+          const titleEl = document.getElementById("gnode-title");
+          const descEl = document.getElementById("gnode-desc");
+          const actEl = document.getElementById("gnode-act");
+          const infEl = document.getElementById("gnode-inf");
+          const promEl = document.getElementById("gnode-promoted");
+
+          if (tagEl) tagEl.innerText = n.node_type.toUpperCase() + (n.layer ? ` (${n.layer})` : "");
+          if (titleEl) titleEl.innerText = n.title;
+          if (descEl) descEl.innerText = n.explanation || "No description available.";
+          if (actEl) actEl.innerText = n.activation.toFixed(4);
+          if (infEl) infEl.innerText = n.logit_influence.toFixed(4);
+          if (promEl) {
+            promEl.innerHTML = n.promoted_tokens && n.promoted_tokens.length > 0
+              ? n.promoted_tokens.map(t => `<span class="tag" style="background:#1e293b; color:#38bdf8; margin-right:4px;">"${typeof t === 'object' ? t.token : t}"</span>`).join("")
+              : '<span style="color:#64748b;">N/A</span>';
+          }
+          inspector.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+
+      svg.appendChild(g);
+    });
+  }
+}
+

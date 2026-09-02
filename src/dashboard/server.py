@@ -19,6 +19,7 @@ class DashboardState:
     loaded_dictionaries: Dict[str, torch.nn.Module] = {}
     unembedding_weights: Optional[torch.Tensor] = None
     feature_metadata: Dict[str, Dict[int, Dict]] = {}  # {hook_point: {feat_id: meta}}
+    attribution_engine = None
     sample_contexts: List[str] = [
         "The Eiffel Tower in Paris, France stands on the Champ de Mars near the Seine river.",
         "Quantum mechanics reveals that particles exist in probabilistic superposition wavefunctions.",
@@ -362,6 +363,70 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
     })
 
 
+async def attribution_graph_handler(request: web.Request) -> web.Response:
+    """Computes an Anthropic Attribution Graph for an input prompt and target token."""
+    if state.model is None or state.tokenizer is None:
+        return web.json_response({"error": "Base model is not loaded."}, status=400)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    prompt = data.get("prompt", "The capital of France is")
+    target_token_id = data.get("target_token_id", None)
+    if target_token_id is not None:
+        try:
+            target_token_id = int(target_token_id)
+        except (ValueError, TypeError):
+            target_token_id = None
+
+    pruning_threshold = float(data.get("pruning_threshold", 0.80))
+    max_nodes = int(data.get("max_nodes", 40))
+    max_edges = int(data.get("max_edges", 50))
+
+    if state.attribution_engine is None:
+        from src.core.multi_dictionary import MultiLayerDictionary
+        from src.circuits.transcoder_circuit import AnthropicAttributionGraphEngine
+
+        trans_candidates = [
+            "checkpoints/gemma3_270m_skip_transcoder_all_layers/step_25000",
+            state.checkpoint_dir if "transcoder" in state.checkpoint_dir.lower() else None,
+        ]
+        chosen_dir = None
+        for cand in trans_candidates:
+            if cand and os.path.exists(cand):
+                chosen_dir = cand
+                break
+
+        if not chosen_dir:
+            return web.json_response({"error": "No trained Transcoder checkpoints found for attribution graphs."}, status=404)
+
+        device = next(state.model.parameters()).device
+        dtype = next(state.model.parameters()).dtype
+        transcoders = MultiLayerDictionary.from_pretrained(chosen_dir, device=device, dtype=dtype)
+        state.attribution_engine = AnthropicAttributionGraphEngine(
+            model=state.model,
+            tokenizer=state.tokenizer,
+            transcoders=transcoders,
+            feature_metadata=state.feature_metadata,
+        )
+
+    try:
+        graph = state.attribution_engine.trace_graph(
+            prompt=prompt,
+            target_token_id=target_token_id,
+            pruning_threshold=pruning_threshold,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
+        return web.json_response(graph)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/api/health", health_handler)
@@ -371,6 +436,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/feature/{feature_id}", feature_details_handler)
     app.router.add_post("/api/steer", steer_handler)
     app.router.add_post("/api/analyze", analyze_text_handler)
+    app.router.add_post("/api/attribution_graph", attribution_graph_handler)
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.exists(static_dir):

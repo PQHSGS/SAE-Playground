@@ -114,3 +114,43 @@ def test_transcoder_circuit_replacement_and_graph():
     assert "nodes" in exported
     assert "edges" in exported
 
+
+def test_anthropic_attribution_graph_engine():
+    from src.circuits.transcoder_circuit import AnthropicAttributionGraphEngine
+    from src.architectures.transcoders.skip_transcoder import SkipTranscoder
+    from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
+
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    cfg = GPT2Config(n_layer=2, n_head=2, n_embd=32, vocab_size=len(tokenizer))
+    model = GPT2LMHeadModel(cfg).eval()
+
+    t0 = SkipTranscoder(d_in=32, d_sae=64, d_out=32, k=4)
+    t1 = SkipTranscoder(d_in=32, d_sae=64, d_out=32, k=4)
+
+    engine = AnthropicAttributionGraphEngine(
+        model=model,
+        tokenizer=tokenizer,
+        transcoders={
+            "transformer.h.0": t0,
+            "transformer.h.1": t1,
+        },
+        feature_metadata={
+            "transformer.h.0": {"0": {"title": "Test Concept 0", "explanation": "Concept explanation 0"}},
+        },
+    )
+
+    graph_res = engine.trace_graph(
+        prompt="Hello world",
+        pruning_threshold=0.85,
+        max_nodes=20,
+        max_edges=25,
+    )
+
+    assert "nodes" in graph_res
+    assert "edges" in graph_res
+    assert "target_token" in graph_res
+    assert "metrics" in graph_res
+    assert len(graph_res["nodes"]) > 0
+    assert graph_res["metrics"]["completeness_score"] > 0
+
+

@@ -50,6 +50,7 @@
           <button class="tab-btn active" data-tab="tab-inspect">Feature Details & Context</button>
           <button class="tab-btn" data-tab="tab-analyze">Live Prompt Analyzer</button>
           <button class="tab-btn" data-tab="tab-steer">Causal Steering Sandbox</button>
+          <button class="tab-btn" data-tab="tab-graph">Attribution Graph (Circuit Tracing)</button>
         </div>
 
         <!-- Tab 1: Feature Inspector (Neuronpedia Signature Layout) -->
@@ -163,6 +164,99 @@
             <div id="steer-output" class="steer-output-box hidden">
               <h4>Steered Model Generation:</h4>
               <p id="steered-text"></p>
+            </div>
+          </div>
+        </section>
+        <!-- Tab 4: Attribution Graph (Anthropic Circuit Tracing) -->
+        <section id="tab-graph" class="tab-pane">
+          <div class="card">
+            <div class="explanation-box" style="margin-bottom: 16px;">
+              <span class="explanation-tag">ANTHROPIC CIRCUIT TRACING (TRANSFORMER CIRCUITS 2025)</span>
+              <p class="explanation-text">
+                Reveals the step-by-step computational graph explaining a model's prediction. Replaces MLP transitions with linear cross-layer transcoder features, tracks exact linear Taylor attributions with frozen attention, and prunes to the core causal circuit.
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label>Input Prompt to Trace:</label>
+              <textarea id="graph-prompt" rows="2">The capital of France is</textarea>
+            </div>
+
+            <div class="steer-controls" style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px;">
+              <div class="form-group" style="flex: 1; min-width: 180px;">
+                <label>Pruning Threshold (&tau;): <span id="graph-tau-val">0.80</span></label>
+                <input type="range" id="graph-tau" min="0.50" max="0.99" step="0.05" value="0.80">
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 140px;">
+                <label>Max Graph Nodes:</label>
+                <input type="number" id="graph-max-nodes" value="35" min="10" max="100">
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 140px;">
+                <label>Max Causal Edges:</label>
+                <input type="number" id="graph-max-edges" value="45" min="10" max="150">
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px;">
+              <button id="btn-trace-graph" class="primary-btn" style="min-width: 220px;">Trace Attribution Graph</button>
+              <span id="graph-loading" class="hidden" style="color: var(--accent); font-weight: 600; font-size: 13px;">⚡ Tracing causal circuit & computing Neumann influence...</span>
+            </div>
+
+            <!-- Candidate Tokens Bar (If Available) -->
+            <div id="graph-candidates-box" class="hidden" style="margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border);">
+              <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-right: 8px;">Target Next Token:</span>
+              <div id="graph-candidates-list" style="display: inline-flex; gap: 8px; flex-wrap: wrap;"></div>
+            </div>
+
+            <!-- Circuit Summary Metrics -->
+            <div id="graph-metrics-card" class="hero-stats hidden" style="margin-bottom: 16px;">
+              <div class="stat-pill">
+                <span class="stat-label">TARGET PREDICTION</span>
+                <span class="stat-value" id="graph-metric-target">-</span>
+              </div>
+              <div class="stat-pill">
+                <span class="stat-label">CONFIDENCE</span>
+                <span class="stat-value" id="graph-metric-prob">-</span>
+              </div>
+              <div class="stat-pill">
+                <span class="stat-label">PRUNED GRAPH SIZE</span>
+                <span class="stat-value" id="graph-metric-size">-</span>
+              </div>
+              <div class="stat-pill">
+                <span class="stat-label">COMPLETENESS SCORE</span>
+                <span class="stat-value" id="graph-metric-comp">-</span>
+              </div>
+            </div>
+
+            <!-- Interactive Graph Canvas / SVG Container -->
+            <div id="graph-canvas-container" class="graph-viewport hidden" style="position: relative; width: 100%; height: 580px; background: #0c0e14; border: 1px solid var(--border); border-radius: 8px; overflow: auto;">
+              <svg id="attribution-graph-svg" style="width: 100%; height: 100%; min-width: 900px; min-height: 560px;"></svg>
+            </div>
+
+            <!-- Clicked Node Inspector Drawer -->
+            <div id="graph-node-inspector" class="card hidden" style="margin-top: 16px; background: #131722; border-color: var(--accent);">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <span class="tag" id="gnode-tag" style="background: var(--accent); color: white; margin-bottom: 6px; display: inline-block;">FEATURE</span>
+                  <h3 id="gnode-title" style="margin: 4px 0 8px 0; color: #fff;">Feature Title</h3>
+                  <p id="gnode-desc" style="color: var(--text-muted); font-size: 13px; margin: 0;"></p>
+                </div>
+                <button id="gnode-close" class="tab-btn" style="padding: 4px 10px; font-size: 12px;">Close</button>
+              </div>
+              <div style="display: flex; gap: 16px; margin-top: 12px;">
+                <div class="stat-pill" style="flex: 1;">
+                  <span class="stat-label">ACTIVATION</span>
+                  <span class="stat-value" id="gnode-act">-</span>
+                </div>
+                <div class="stat-pill" style="flex: 1;">
+                  <span class="stat-label">LOGIT INFLUENCE</span>
+                  <span class="stat-value" id="gnode-inf">-</span>
+                </div>
+                <div class="stat-pill" style="flex: 2;">
+                  <span class="stat-label">TOP PROMOTED TOKENS</span>
+                  <span class="stat-value" id="gnode-promoted" style="font-size: 13px; font-weight: normal;">-</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>

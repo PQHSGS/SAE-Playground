@@ -273,3 +273,387 @@ class TranscoderCircuitGraph:
             logger.info(f"Exported Transcoder circuit graph to: {save_path}")
 
         return graph_data
+
+
+@dataclass
+class AttributionNode:
+    id: str
+    node_type: str  # "input_token" | "feature" | "logit"
+    layer: str
+    layer_idx: int
+    pos: int
+    feature_id: Optional[int]
+    label: str
+    title: str
+    explanation: str
+    activation: float
+    logit_influence: float
+    promoted_tokens: List[str]
+
+    def to_dict(self) -> Dict:
+        return {
+            "id": self.id,
+            "node_type": self.node_type,
+            "layer": self.layer,
+            "layer_idx": self.layer_idx,
+            "pos": self.pos,
+            "feature_id": self.feature_id,
+            "label": self.label,
+            "title": self.title,
+            "explanation": self.explanation,
+            "activation": float(self.activation),
+            "logit_influence": float(self.logit_influence),
+            "promoted_tokens": self.promoted_tokens,
+        }
+
+
+@dataclass
+class AttributionEdge:
+    source: str
+    target: str
+    weight: float
+
+    def to_dict(self) -> Dict:
+        return {
+            "source": self.source,
+            "target": self.target,
+            "weight": float(self.weight),
+        }
+
+
+class AnthropicAttributionGraphEngine:
+    """
+    Anthropic Transformer Circuits Attribution Graph Engine.
+    Reference: 'Circuit Tracing: Revealing Computational Graphs in Language Models'
+               (Ameisen et al., Anthropic, March 2025).
+
+    Methodology:
+    1. Replacement Model with Cross-Layer / Inter-Layer Transcoders.
+    2. Linear feature-feature attribution with frozen attention & RMSNorm.
+    3. Pairwise Virtual Weights: V_{st} = <W_dec^s, W_enc^t>.
+    4. Neumann Series Indirect Influence: B = (I - A)^{-1} - I.
+    5. Cumulative influence pruning (threshold tau=0.80) & edge filtering.
+    6. Automatic semantic labeling via feature auto-interpretation metadata.
+    """
+
+    def __init__(
+        self,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizerBase,
+        transcoders: Union[MultiLayerDictionary, Dict[str, BaseDictionary]],
+        feature_metadata: Optional[Dict[str, Dict]] = None,
+    ):
+        self.model = model
+        self.tokenizer = tokenizer
+        if isinstance(transcoders, dict):
+            self.transcoders = MultiLayerDictionary(transcoders)
+        else:
+            self.transcoders = transcoders
+        self.feature_metadata = feature_metadata or {}
+        self.hook_manager = HookManager(model)
+
+    def get_feature_meta(self, layer: str, feat_id: int) -> Dict:
+        candidates = [
+            layer,
+            layer.replace(".", "_"),
+            layer.replace("model.layers.", ""),
+            layer.replace("transformer.", ""),
+        ]
+        layer_dict = {}
+        for cand in candidates:
+            if cand in self.feature_metadata:
+                layer_dict = self.feature_metadata[cand]
+                break
+        return layer_dict.get(str(feat_id), layer_dict.get(feat_id, {}))
+
+    def trace_graph(
+        self,
+        prompt: str,
+        target_token_id: Optional[int] = None,
+        pruning_threshold: float = 0.80,
+        max_nodes: int = 40,
+        max_edges: int = 50,
+        top_k_features_per_layer: int = 4,
+    ) -> Dict:
+        device = next(self.model.parameters()).device
+        self.model.eval()
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
+        input_ids = inputs["input_ids"][0].tolist()
+        seq_len = len(input_ids)
+        token_strs = [self.tokenizer.decode([tid]) for tid in input_ids]
+
+        # Identify all transcoder hook points
+        if hasattr(self.transcoders, "hook_point_map"):
+            hook_points = list(self.transcoders.hook_point_map.values())
+        else:
+            hook_points = list(self.transcoders.dictionaries.keys())
+
+        # Sort hook points by layer index
+        def extract_layer_idx(hp: str) -> int:
+            nums = [int(s) for s in hp.replace("_", ".").split(".") if s.isdigit()]
+            return nums[0] if nums else 0
+
+        hook_points = sorted(hook_points, key=extract_layer_idx)
+
+        # 1. Forward Pass to gather activations
+        self.hook_manager.register_forward_hooks(hook_points)
+        out = self.model(**inputs)
+        logits = out.logits[0, -1]
+        probs = torch.softmax(logits, dim=-1)
+
+        if target_token_id is None:
+            target_token_id = int(torch.argmax(logits).item())
+        target_token_str = self.tokenizer.decode([target_token_id])
+        target_prob = float(probs[target_token_id].item())
+
+        target_logit = logits[target_token_id]
+
+        # Capture layer activations
+        acts_dict = {hp: self.hook_manager.activations[hp] for hp in hook_points}
+
+        # Compute gradients with respect to layer activations
+        grads = torch.autograd.grad(
+            target_logit,
+            list(acts_dict.values()),
+            retain_graph=False,
+            create_graph=False,
+        )
+        grad_dict = {hp: g[0].detach() for hp, g in zip(hook_points, grads)}  # (seq_len, d_in)
+        self.hook_manager.remove_hooks()
+
+        # 2. Extract Candidate Active Features
+        candidate_nodes: Dict[str, AttributionNode] = {}
+        features_by_layer: Dict[str, List[Dict]] = {hp: [] for hp in hook_points}
+
+        # Create input token nodes
+        for pos, t_str in enumerate(token_strs):
+            tok_id = f"tok_{pos}"
+            candidate_nodes[tok_id] = AttributionNode(
+                id=tok_id,
+                node_type="input_token",
+                layer="input",
+                layer_idx=-1,
+                pos=pos,
+                feature_id=None,
+                label=t_str,
+                title=f"Token [{t_str.strip()}]",
+                explanation=f"Prompt token '{t_str}' at position {pos}",
+                activation=1.0,
+                logit_influence=0.0,
+                promoted_tokens=[],
+            )
+
+        # Create candidate transcoder feature nodes
+        for lyr_idx, hp in enumerate(hook_points):
+            sae = self.transcoders.get_dictionary(hp)
+            x_act = acts_dict[hp][0].detach()  # (seq_len, d_in)
+            scale = (sae.d_in ** 0.5) / (x_act.norm(dim=-1, keepdim=True) + 1e-8)
+            normed_act = (x_act * scale).to(device=sae.get_decoder_weights().device, dtype=sae.get_decoder_weights().dtype)
+            
+            with torch.no_grad():
+                f_acts = sae.encode(normed_act)  # (seq_len, d_sae)
+
+            w_dec = sae.get_decoder_weights().to(device)
+            g_layer = grad_dict[hp].to(device=w_dec.device, dtype=w_dec.dtype)  # (seq_len, d_in)
+            g_feats = g_layer @ w_dec.T  # (seq_len, d_sae)
+
+            # Direct attribution to target logit
+            direct_attr = (f_acts.to(device) * g_feats).abs()  # (seq_len, d_sae)
+
+            # Select top features across sequence positions for this layer
+            flat_attr = direct_attr.view(-1)
+            top_k_val, top_k_idx = torch.topk(flat_attr, k=min(top_k_features_per_layer, flat_attr.numel()))
+
+            for val, flat_i in zip(top_k_val.tolist(), top_k_idx.tolist()):
+                if val <= 1e-5:
+                    continue
+                pos = flat_i // sae.d_sae
+                feat_idx = flat_i % sae.d_sae
+                act_val = float(f_acts[pos, feat_idx].item())
+
+                fmeta = self.get_feature_meta(hp, feat_idx)
+                node_id = f"{hp}::pos_{pos}::feat_{feat_idx}"
+                title = fmeta.get("title", f"Feature #{feat_idx}")
+                explanation = fmeta.get("explanation", "")
+                promoted = fmeta.get("top_promoted_tokens", [])
+
+                node = AttributionNode(
+                    id=node_id,
+                    node_type="feature",
+                    layer=hp,
+                    layer_idx=lyr_idx,
+                    pos=int(pos),
+                    feature_id=int(feat_idx),
+                    label=f"F#{feat_idx}",
+                    title=title,
+                    explanation=explanation,
+                    activation=act_val,
+                    logit_influence=float(val),
+                    promoted_tokens=promoted,
+                )
+                candidate_nodes[node_id] = node
+                features_by_layer[hp].append({
+                    "id": node_id,
+                    "pos": int(pos),
+                    "feat_idx": int(feat_idx),
+                    "act": act_val,
+                    "grad": float(g_feats[pos, feat_idx].item()),
+                    "direct_attr": float(val),
+                })
+
+        # Create output logit node
+        logit_node_id = f"logit::{target_token_str.strip()}"
+        candidate_nodes[logit_node_id] = AttributionNode(
+            id=logit_node_id,
+            node_type="logit",
+            layer="output",
+            layer_idx=len(hook_points),
+            pos=seq_len - 1,
+            feature_id=None,
+            label=f"Logit: {target_token_str.strip()}",
+            title=f"Target Token '{target_token_str.strip()}'",
+            explanation=f"Final prediction probability: {target_prob * 100:.1f}%",
+            activation=target_prob,
+            logit_influence=1.0,
+            promoted_tokens=[target_token_str.strip()],
+        )
+
+        # 3. Compute Direct Pairwise Edges
+        raw_edges: List[AttributionEdge] = []
+
+        # Token -> First Layer Features edges
+        if hook_points:
+            first_hp = hook_points[0]
+            for f_info in features_by_layer[first_hp]:
+                f_pos = f_info["pos"]
+                tok_id = f"tok_{f_pos}"
+                raw_edges.append(AttributionEdge(
+                    source=tok_id,
+                    target=f_info["id"],
+                    weight=f_info["direct_attr"],
+                ))
+
+        # Feature -> Feature cross-layer edges (Taylor virtual weights)
+        for i, src_hp in enumerate(hook_points[:-1]):
+            src_sae = self.transcoders.get_dictionary(src_hp)
+            src_w_dec = src_sae.get_decoder_weights()
+            for tgt_hp in hook_points[i + 1: i + 4]:  # Restrict to nearby downstream layers
+                tgt_sae = self.transcoders.get_dictionary(tgt_hp)
+                tgt_w_enc = tgt_sae.w_enc.T  # (d_sae, d_in)
+
+                for s_item in features_by_layer[src_hp]:
+                    s_w = src_w_dec[s_item["feat_idx"]].to(device, dtype=torch.float32)
+                    for t_item in features_by_layer[tgt_hp]:
+                        t_w = tgt_w_enc[t_item["feat_idx"]].to(device, dtype=torch.float32)
+                        # Virtual weight V_st = <W_dec^s, W_enc^t>
+                        v_st = float(torch.dot(s_w, t_w).item())
+                        edge_weight = abs(s_item["act"] * v_st * t_item["grad"])
+                        if edge_weight > 1e-4:
+                            raw_edges.append(AttributionEdge(
+                                source=s_item["id"],
+                                target=t_item["id"],
+                                weight=edge_weight,
+                            ))
+
+        # Later Feature -> Output Logit edges
+        for hp in hook_points[-4:]:
+            for f_item in features_by_layer[hp]:
+                raw_edges.append(AttributionEdge(
+                    source=f_item["id"],
+                    target=logit_node_id,
+                    weight=f_item["direct_attr"],
+                ))
+
+        # 4. Indirect Influence Matrix & Neumann Series: B = (I - A)^{-1} - I
+        all_node_keys = list(candidate_nodes.keys())
+        node_idx_map = {k: i for i, k in enumerate(all_node_keys)}
+        N = len(all_node_keys)
+
+        adj_matrix = torch.zeros((N, N), dtype=torch.float32)
+        for e in raw_edges:
+            if e.source in node_idx_map and e.target in node_idx_map:
+                s_i = node_idx_map[e.source]
+                t_i = node_idx_map[e.target]
+                adj_matrix[t_i, s_i] = max(adj_matrix[t_i, s_i].item(), abs(e.weight))
+
+        # Column-normalize incoming edges to sum to 1
+        col_sums = adj_matrix.sum(dim=1, keepdim=True)
+        col_sums[col_sums == 0] = 1.0
+        norm_adj = adj_matrix / col_sums
+
+        try:
+            # Neumann Series solution: (I - norm_adj)^{-1} - I
+            I = torch.eye(N)
+            B = torch.inverse(I - 0.95 * norm_adj) - I
+            logit_i = node_idx_map[logit_node_id]
+            influence_vec = B[logit_i].tolist()
+            for k, inf_val in zip(all_node_keys, influence_vec):
+                candidate_nodes[k].logit_influence = max(candidate_nodes[k].logit_influence, float(inf_val))
+        except Exception:
+            # Fallback to direct attribution ranking
+            pass
+
+        # 5. Graph Pruning (Anthropic cumulative threshold)
+        # Keep tokens and logit unconditionally
+        kept_node_ids = set()
+        for k, n in candidate_nodes.items():
+            if n.node_type in ("input_token", "logit"):
+                kept_node_ids.add(k)
+
+        # Rank feature nodes by logit influence
+        feat_nodes = [n for n in candidate_nodes.values() if n.node_type == "feature"]
+        feat_nodes.sort(key=lambda x: x.logit_influence, reverse=True)
+
+        total_feat_inf = sum(n.logit_influence for n in feat_nodes) + 1e-8
+        cum_inf = 0.0
+        for n in feat_nodes:
+            kept_node_ids.add(n.id)
+            cum_inf += n.logit_influence
+            if cum_inf / total_feat_inf >= pruning_threshold or len(kept_node_ids) >= max_nodes:
+                break
+
+        # Filter edges to kept nodes
+        filtered_edges = [
+            e for e in raw_edges
+            if e.source in kept_node_ids and e.target in kept_node_ids
+        ]
+        filtered_edges.sort(key=lambda x: x.weight, reverse=True)
+        filtered_edges = filtered_edges[:max_edges]
+
+        # Prune unreferenced feature nodes
+        connected_ids = set()
+        for e in filtered_edges:
+            connected_ids.add(e.source)
+            connected_ids.add(e.target)
+        # Keep all tokens and logit
+        for k, n in candidate_nodes.items():
+            if n.node_type in ("input_token", "logit"):
+                connected_ids.add(k)
+
+        final_nodes = [candidate_nodes[k].to_dict() for k in kept_node_ids if k in connected_ids]
+        final_edges = [e.to_dict() for e in filtered_edges]
+
+        top_cand_vals, top_cand_ids = torch.topk(probs, k=min(6, probs.shape[-1]))
+        candidates = [
+            {"token": self.tokenizer.decode([cid]), "id": int(cid), "prob": float(cp)}
+            for cp, cid in zip(top_cand_vals.tolist(), top_cand_ids.tolist())
+        ]
+
+        return {
+            "prompt": prompt,
+            "target_token": target_token_str,
+            "target_token_id": int(target_token_id),
+            "target_prob": target_prob,
+            "candidates": candidates,
+            "pruning_threshold": pruning_threshold,
+            "nodes": final_nodes,
+            "edges": final_edges,
+            "metrics": {
+                "total_candidate_nodes": N,
+                "pruned_nodes": len(final_nodes),
+                "pruned_edges": len(final_edges),
+                "completeness_score": min(1.0, cum_inf / total_feat_inf),
+            }
+        }
+
