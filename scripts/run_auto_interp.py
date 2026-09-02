@@ -36,9 +36,8 @@ def parse_args():
     parser.add_argument("--num_features", type=int, default=5120, help="Number of features to explain per layer")
     parser.add_argument("--output_file", type=str, default="data/gemma3_270m_feature_metadata.json")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cpu or cuda)")
-    parser.add_argument("--explainer_model", type=str, default="google/gemma-3-4b-it", help="HuggingFace model for auto-interp")
-    parser.add_argument("--load_in_4bit", action="store_true", default=True, help="Load explainer in 4-bit")
-    parser.add_argument("--provider", type=str, default="llm", choices=["llm", "heuristic"], help="Explanation provider (llm or heuristic)")
+    parser.add_argument("--explainer_model", type=str, default="google/gemma-3-4b-it", help="Local HuggingFace LLM for auto-interp")
+    parser.add_argument("--load_in_4bit", action="store_true", default=True, help="Load explainer in 4-bit NF4")
     return parser.parse_args()
 
 
@@ -67,25 +66,32 @@ def process_layer_metadata(
     top_neg_vals, top_neg_idx = torch.topk(logits, k=5, dim=-1, largest=False)
 
     layer_results = {}
+    token_str_cache = {}
+    def get_token_str(tid: int) -> str:
+        if tid not in token_str_cache:
+            token_str_cache[tid] = tokenizer.decode([tid])
+        return token_str_cache[tid]
+
     for feat_id in range(total_feats):
+        promoted = [
+            {"token": get_token_str(idx.item()), "token_id": idx.item(), "logit": float(val.item())}
+            for idx, val in zip(top_pos_idx[feat_id], top_pos_vals[feat_id])
+        ]
+        suppressed = [
+            {"token": get_token_str(idx.item()), "token_id": idx.item(), "logit": float(val.item())}
+            for idx, val in zip(top_neg_idx[feat_id], top_neg_vals[feat_id])
+        ]
+
         snippets = collector.get_feature_snippets(feat_id) if collector else []
-        if collector:
+        if collector and snippets:
             res = explainer.explain_feature(feat_id, snippets)
             if isinstance(res, (tuple, list)):
                 title, desc = res[0], res[1]
             else:
                 title, desc = f"Feature #{feat_id}", str(res)
+            print(f"   ✨ Feature #{feat_id:4d}: '{title}' | {desc[:60]}...")
         else:
-            title, desc = f"Feature #{feat_id}", "Unlabeled feature."
-
-        promoted = [
-            {"token": tokenizer.decode([idx.item()]), "token_id": idx.item(), "logit": float(val.item())}
-            for idx, val in zip(top_pos_idx[feat_id], top_pos_vals[feat_id])
-        ]
-        suppressed = [
-            {"token": tokenizer.decode([idx.item()]), "token_id": idx.item(), "logit": float(val.item())}
-            for idx, val in zip(top_neg_idx[feat_id], top_neg_vals[feat_id])
-        ]
+            title, desc = f"Feature #{feat_id}", "No activations observed across sampled contexts."
 
         # Convert snippets to clean serializable dicts for Neuronpedia UI
         serialized_snippets = [
@@ -153,7 +159,6 @@ def main():
         model_name=args.explainer_model,
         load_in_4bit=args.load_in_4bit,
         device=device,
-        provider=args.provider,
     )
     full_metadata_catalog = {}
 

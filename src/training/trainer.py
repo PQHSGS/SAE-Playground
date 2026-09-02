@@ -131,12 +131,13 @@ class DictionaryTrainer:
 
             sae = self.model.dictionaries[sanitized_key]
 
+            sae_dtype = sae.get_decoder_weights().dtype
             # Transcoder vs standard SAE parsing
             if isinstance(act, (tuple, list)):
-                x_in = act[0].to(self.device, non_blocking=True).contiguous()
-                target = act[1].to(self.device, non_blocking=True).contiguous()
+                x_in = act[0].to(device=self.device, dtype=sae_dtype, non_blocking=True).contiguous()
+                target = act[1].to(device=self.device, dtype=sae_dtype, non_blocking=True).contiguous()
             else:
-                x_in = act.to(self.device, non_blocking=True).contiguous()
+                x_in = act.to(device=self.device, dtype=sae_dtype, non_blocking=True).contiguous()
                 target = x_in
 
             dead_mask = self.tokens_since_activated[sanitized_key] > self.config.dead_feature_threshold
@@ -206,16 +207,20 @@ class DictionaryTrainer:
 
         return metrics
 
-    def train(self) -> None:
+    def train(self, initial_step: int = 0) -> None:
         first_sae = next(iter(self.model.dictionaries.values()))
         arch_name = first_sae.__class__.__name__
         num_layers = len(self.model)
 
         logger.info(f"Starting Training: {arch_name} across {num_layers} layer(s) (d_in={first_sae.d_in}, d_sae={first_sae.d_sae})")
-        logger.info(f"Target steps: {self.config.total_steps} | Batch size: {self.config.batch_size}")
+        logger.info(f"Target steps: {self.config.total_steps} | Batch size: {self.config.batch_size} | Initial step: {initial_step}")
 
-        step = 0
+        step = initial_step
         running_nmse = 0.0
+
+        if initial_step > 0:
+            for _ in range(initial_step):
+                self.scheduler.step()
 
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -228,6 +233,7 @@ class DictionaryTrainer:
             task = progress.add_task(
                 f"Training {arch_name}...",
                 total=self.config.total_steps,
+                completed=initial_step,
                 nmse=0.0,
                 l0=0.0,
                 dead=0.0,

@@ -29,6 +29,7 @@ def load_yaml(path: str) -> dict:
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Sparse Autoencoders, Transcoders, or Crosscoders via YAML config.")
     parser.add_argument("--config", type=str, required=True, help="Path to experiment YAML config file")
+    parser.add_argument("--resume_from", type=str, default=None, help="Path to checkpoint folder to resume training from")
     return parser.parse_args()
 
 
@@ -150,10 +151,25 @@ def main():
         seed=seed,
     )
 
-    # Build dictionary model collection (N >= 1)
+    # Build or resume dictionary model collection (N >= 1)
     from src.core.multi_dictionary import MultiLayerDictionary
+    import json
 
-    if arch_name in ["crosscoder", "batch_topk_crosscoder"]:
+    initial_step = 0
+    if args.resume_from and os.path.exists(args.resume_from):
+        logger.info(f"Resuming dictionary model from '{args.resume_from}'...")
+        dict_model = MultiLayerDictionary.from_pretrained(args.resume_from, device=device, dtype=torch.float32)
+        return_dict = True
+        multi_cfg = os.path.join(args.resume_from, "multi_sae_config.json")
+        if os.path.exists(multi_cfg):
+            try:
+                with open(multi_cfg, "r") as f:
+                    meta_json = json.load(f)
+                initial_step = meta_json.get("metadata", {}).get("step", 0)
+                logger.info(f"Successfully loaded checkpoint step: {initial_step}")
+            except Exception as e:
+                logger.warning(f"Could not parse step from multi_sae_config.json: {e}")
+    elif arch_name in ["crosscoder", "batch_topk_crosscoder"]:
         kwargs["n_layers"] = len(hook_points)
         dict_model = MultiLayerDictionary({
             "crosscoder": build_dictionary(architecture=arch_name, d_in=d_in, d_sae=d_sae, **kwargs)
@@ -190,7 +206,7 @@ def main():
         config=training_cfg,
         device=device,
     )
-    trainer.train()
+    trainer.train(initial_step=initial_step)
 
 
 if __name__ == "__main__":
