@@ -62,7 +62,18 @@ def get_or_load_dictionary(layer: str) -> Optional[torch.nn.Module]:
 
 
 def get_feature_meta(target_layer: str, feature_id: int) -> Dict:
-    layer_dict = state.feature_metadata.get(target_layer, state.feature_metadata.get(target_layer.replace("model.layers.", ""), {}))
+    candidates = [
+        target_layer,
+        target_layer.replace(".", "_"),
+        target_layer.replace("model.layers.", ""),
+        target_layer.replace("transformer.", ""),
+        target_layer.replace("transformer.h.", ""),
+    ]
+    layer_dict = {}
+    for cand in candidates:
+        if cand in state.feature_metadata:
+            layer_dict = state.feature_metadata[cand]
+            break
     return layer_dict.get(str(feature_id), layer_dict.get(feature_id, {}))
 
 

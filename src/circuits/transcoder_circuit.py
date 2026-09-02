@@ -103,9 +103,16 @@ class TranscoderCircuitGraph:
                     if hp_in in layer_inputs:
                         x_in = layer_inputs[hp_in]
                         sae = self.transcoders.get_dictionary(hp_in)
+                        w_ref = sae.get_decoder_weights()
+                        x_in = x_in.to(device=w_ref.device, dtype=w_ref.dtype)
                         f = sae.encode(x_in)
-                        y_hat = sae.decode(f)
-                        return y_hat
+                        if isinstance(out, tuple):
+                            target_dtype = out[0].dtype
+                            y_hat = sae.decode(f).to(device=out[0].device, dtype=target_dtype)
+                            return (y_hat,) + out[1:]
+                        else:
+                            y_hat = sae.decode(f).to(device=out.device, dtype=out.dtype)
+                            return y_hat
                     return out
                 return hook
 
@@ -185,12 +192,13 @@ class TranscoderCircuitGraph:
 
         for i, src_hp in enumerate(input_hooks):
             src_sae = self.transcoders.get_dictionary(src_hp)
-            f_clean = src_sae.encode(clean_acts[src_hp][0, -1].detach())
-            f_corr = src_sae.encode(corr_acts[src_hp])
+            w_dec = src_sae.get_decoder_weights().to(device)
+            f_clean = src_sae.encode(clean_acts[src_hp][0, -1].detach().to(device=w_dec.device, dtype=w_dec.dtype))
+            f_corr = src_sae.encode(corr_acts[src_hp].to(device=w_dec.device, dtype=w_dec.dtype))
             delta_f = f_clean - f_corr
 
-            w_dec = src_sae.get_decoder_weights().to(device)
-            grad_f = grad_dict[src_hp] @ w_dec.T
+            grad_src = grad_dict[src_hp].to(device=w_dec.device, dtype=w_dec.dtype)
+            grad_f = grad_src @ w_dec.T
             node_attr = (delta_f * grad_f).abs()
 
             top_k_indices = torch.topk(node_attr, k=min(10, src_sae.d_sae)).indices.tolist()
@@ -199,7 +207,8 @@ class TranscoderCircuitGraph:
             for tgt_hp in input_hooks[i + 1:]:
                 tgt_sae = self.transcoders.get_dictionary(tgt_hp)
                 tgt_w_dec = tgt_sae.get_decoder_weights().to(device)
-                grad_tgt_f = grad_dict[tgt_hp] @ tgt_w_dec.T
+                grad_tgt = grad_dict[tgt_hp].to(device=tgt_w_dec.device, dtype=tgt_w_dec.dtype)
+                grad_tgt_f = grad_tgt @ tgt_w_dec.T
 
                 edge_matrix = torch.outer(delta_f.abs()[:50], grad_tgt_f.abs()[:50])
                 flat_top = torch.topk(edge_matrix.view(-1), k=min(3, edge_matrix.numel()))

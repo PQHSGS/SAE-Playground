@@ -86,8 +86,12 @@ def main():
     state.checkpoint_dir = checkpoint_dir
 
     # 3. Load pre-computed feature metadata / auto-interp results if present
+    model_slug = model_name.split("/")[-1].lower()
     metadata_candidates = [
+        f"data/{model_slug}_feature_metadata.json",
+        f"data/{os.path.basename(checkpoint_dir)}_feature_metadata.json",
         "data/gemma3_270m_feature_metadata.json",
+        "data/planckgpt_feature_metadata.json",
         "data/feature_metadata.json",
         "data/auto_interp_results.json"
     ]
