@@ -71,9 +71,13 @@ class MultiLayerDictionary(nn.Module):
         for hp, act in activations_dict.items():
             key = self.reverse_map.get(hp, self._sanitize_key(hp))
             if key in self.dictionaries:
-                target = targets_dict.get(hp, act)
+                if isinstance(act, (tuple, list)):
+                    act_in, act_target = act[0], act[1]
+                else:
+                    act_in = act
+                    act_target = targets_dict.get(hp, act)
                 dead_mask = dead_masks_dict.get(hp, None)
-                out = self.dictionaries[key](act, target=target, dead_mask=dead_mask)
+                out = self.dictionaries[key](act_in, target=act_target, dead_mask=dead_mask)
                 outputs[hp] = out
                 total_loss = total_loss + out.loss
 
