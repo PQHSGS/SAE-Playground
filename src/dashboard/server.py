@@ -389,20 +389,24 @@ async def attribution_graph_handler(request: web.Request) -> web.Response:
         from src.core.multi_dictionary import MultiLayerDictionary
         from src.circuits.transcoder_circuit import AnthropicAttributionGraphEngine
 
-        trans_candidates = [
-            "checkpoints/gemma3_270m_skip_transcoder_all_layers/step_25000",
-            state.checkpoint_dir if "transcoder" in state.checkpoint_dir.lower() else None,
-        ]
         chosen_dir = None
-        for cand in trans_candidates:
-            if cand and os.path.exists(cand):
-                chosen_dir = cand
-                break
+        if state.checkpoint_dir and os.path.exists(os.path.join(state.checkpoint_dir, "multi_sae_config.json")):
+            chosen_dir = state.checkpoint_dir
+        else:
+            trans_candidates = [
+                "checkpoints/gemma3_270m_skip_transcoder_all_layers/step_25000",
+                "checkpoints/planckgpt_spherical_tree_sasa/step_25000",
+                state.checkpoint_dir if state.checkpoint_dir and "transcoder" in state.checkpoint_dir.lower() else None,
+            ]
+            for cand in trans_candidates:
+                if cand and os.path.exists(cand):
+                    chosen_dir = cand
+                    break
 
         if not chosen_dir:
-            return web.json_response({"error": "No trained Transcoder checkpoints found for attribution graphs."}, status=404)
+            return web.json_response({"error": "No multi-layer dictionary checkpoints found for attribution graphs."}, status=404)
 
-        device = next(state.model.parameters()).device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = next(state.model.parameters()).dtype
         transcoders = MultiLayerDictionary.from_pretrained(chosen_dir, device=device, dtype=dtype)
         state.attribution_engine = AnthropicAttributionGraphEngine(

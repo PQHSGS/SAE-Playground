@@ -123,7 +123,7 @@ class BaseDictionary(nn.Module, ABC):
             d_out=d_out,
             **kwargs
         )
-        state_dict = load_file(os.path.join(load_dir, "model.safetensors"), device=device)
+        state_dict = load_file(os.path.join(load_dir, "model.safetensors"), device="cpu")
         instance.load_state_dict(state_dict)
         instance.to(device=device, dtype=dtype)
         return instance

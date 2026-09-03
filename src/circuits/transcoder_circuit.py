@@ -84,7 +84,8 @@ class TranscoderCircuitGraph:
             # 1. Baseline Model Loss
             with torch.no_grad():
                 out = self.model(**inputs)
-                shift_logits = out.logits[:, :-1, :].contiguous()
+                raw_logits = out.logits if hasattr(out, "logits") else out
+                shift_logits = raw_logits[:, :-1, :].contiguous()
                 shift_labels = labels[:, 1:].contiguous()
                 base_loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).item()
                 baseline_losses.append(base_loss)
@@ -125,7 +126,8 @@ class TranscoderCircuitGraph:
             try:
                 with torch.no_grad():
                     rep_out = self.model(**inputs)
-                    shift_rep_logits = rep_out.logits[:, :-1, :].contiguous()
+                    raw_rep = rep_out.logits if hasattr(rep_out, "logits") else rep_out
+                    shift_rep_logits = raw_rep[:, :-1, :].contiguous()
                     rep_loss = loss_fn(shift_rep_logits.view(-1, shift_rep_logits.size(-1)), shift_labels.view(-1)).item()
                     replaced_losses.append(rep_loss)
             finally:
@@ -165,7 +167,8 @@ class TranscoderCircuitGraph:
         # 1. Clean forward pass
         clean_inputs = self.tokenizer(clean_text, return_tensors="pt").to(device)
         clean_out = self.model(**clean_inputs)
-        target_logit = clean_out.logits[0, -1, target_token_id]
+        raw_clean = clean_out.logits if hasattr(clean_out, "logits") else clean_out
+        target_logit = raw_clean[0, -1, target_token_id]
 
         # Get clean activations and compute gradients
         clean_acts = {hp: self.hook_manager.activations[hp] for hp in input_hooks}
@@ -399,7 +402,8 @@ class AnthropicAttributionGraphEngine:
         # 1. Forward Pass to gather activations
         self.hook_manager.register_forward_hooks(hook_points)
         out = self.model(**inputs)
-        logits = out.logits[0, -1]
+        raw_logits = out.logits if hasattr(out, "logits") else out
+        logits = raw_logits[0, -1]
         probs = torch.softmax(logits, dim=-1)
 
         if target_token_id is None:
@@ -540,7 +544,7 @@ class AnthropicAttributionGraphEngine:
             src_w_dec = src_sae.get_decoder_weights()
             for tgt_hp in hook_points[i + 1: i + 4]:  # Restrict to nearby downstream layers
                 tgt_sae = self.transcoders.get_dictionary(tgt_hp)
-                tgt_w_enc = tgt_sae.w_enc.T  # (d_sae, d_in)
+                tgt_w_enc = tgt_sae.w_enc.T if hasattr(tgt_sae, "w_enc") else tgt_sae.get_decoder_weights()
 
                 for s_item in features_by_layer[src_hp]:
                     s_w = src_w_dec[s_item["feat_idx"]].to(device, dtype=torch.float32)
