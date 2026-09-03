@@ -86,6 +86,8 @@ async function initLayers() {
 
 function initSearch() {
   const searchInput = document.getElementById("feature-search");
+  const labeledToggle = document.getElementById("labeled-only-toggle");
+
   let debounceTimer;
   searchInput.addEventListener("input", (e) => {
     clearTimeout(debounceTimer);
@@ -93,13 +95,22 @@ function initSearch() {
       loadFeatures(e.target.value);
     }, 200);
   });
+
+  if (labeledToggle) {
+    labeledToggle.addEventListener("change", () => {
+      loadFeatures(searchInput.value);
+    });
+  }
 }
 
 async function loadFeatures(searchQuery = "") {
   const listEl = document.getElementById("feature-list");
+  const labeledToggle = document.getElementById("labeled-only-toggle");
+  const isLabeledOnly = labeledToggle ? labeledToggle.checked : false;
+
   listEl.innerHTML = '<div class="loading">Loading feature catalog...</div>';
   try {
-    let url = `/api/features?page=1&page_size=50&layer=${encodeURIComponent(currentActiveLayer)}`;
+    let url = `/api/features?page=1&page_size=60&layer=${encodeURIComponent(currentActiveLayer)}&labeled_only=${isLabeledOnly}&sort_by=labeled_first`;
     if (searchQuery) {
       url += `&search=${encodeURIComponent(searchQuery)}`;
     }

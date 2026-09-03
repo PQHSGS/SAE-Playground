@@ -164,21 +164,39 @@ async def features_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Layer '{target_layer}' is not available."}, status=400)
 
     total_features = dict_model.d_sae
+    labeled_only = request.query.get("labeled_only", "false").lower() in ("true", "1")
+    sort_by = request.query.get("sort_by", "labeled_first")
 
     if search:
         search_lower = search.lower()
-        matching_indices = [
+        all_indices = [
             idx for idx in range(total_features)
-            if search_lower in get_feature_meta(target_layer, idx).get("explanation", f"Feature #{idx}").lower() or str(idx) == search_lower
+            if search_lower in get_feature_meta(target_layer, idx).get("explanation", f"Feature #{idx}").lower()
+            or search_lower in get_feature_meta(target_layer, idx).get("title", "").lower()
+            or str(idx) == search_lower
         ]
-        total_features = len(matching_indices)
-        start_idx = (page - 1) * page_size
-        end_idx = min(start_idx + page_size, total_features)
-        page_indices = matching_indices[start_idx:end_idx]
+    elif labeled_only:
+        all_indices = [
+            idx for idx in range(total_features)
+            if not get_feature_meta(target_layer, idx).get("title", f"Feature #{idx}").startswith("Feature #")
+        ]
+    elif sort_by == "labeled_first":
+        labeled_indices = [
+            idx for idx in range(total_features)
+            if not get_feature_meta(target_layer, idx).get("title", f"Feature #{idx}").startswith("Feature #")
+        ]
+        unlabeled_indices = [
+            idx for idx in range(total_features)
+            if get_feature_meta(target_layer, idx).get("title", f"Feature #{idx}").startswith("Feature #")
+        ]
+        all_indices = labeled_indices + unlabeled_indices
     else:
-        start_idx = (page - 1) * page_size
-        end_idx = min(start_idx + page_size, total_features)
-        page_indices = list(range(start_idx, end_idx))
+        all_indices = list(range(total_features))
+
+    total_matching = len(all_indices)
+    start_idx = (page - 1) * page_size
+    end_idx = min(start_idx + page_size, total_matching)
+    page_indices = all_indices[start_idx:end_idx]
 
     features = []
     for idx in page_indices:
@@ -195,7 +213,8 @@ async def features_handler(request: web.Request) -> web.Response:
 
     return web.json_response({
         "layer": target_layer,
-        "total_features": total_features,
+        "total_features": total_matching,
+        "d_sae": total_features,
         "page": page,
         "page_size": page_size,
         "features": features,
