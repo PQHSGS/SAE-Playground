@@ -51,14 +51,44 @@ class FeatureSteeringEngine:
 
         inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
         with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                do_sample=temperature > 0,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
+            if hasattr(self.model, "generate"):
+                eos_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else self.tokenizer.pad_token_id
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    do_sample=temperature > 0,
+                    pad_token_id=eos_id,
+                )
+                generated_ids = outputs[0]
+            else:
+                # Universal autoregressive sampling for custom architectures (e.g. PlanckGPT)
+                curr_ids = inputs["input_ids"]
+                eos_id = self.tokenizer.eos_token_id
+                for _ in range(max_new_tokens):
+                    out = self.model(curr_ids)
+                    logits = out.logits if hasattr(out, "logits") else out
+                    next_logits = logits[0, -1, :]
+                    if temperature > 0:
+                        probs = torch.softmax(next_logits / max(temperature, 1e-4), dim=-1)
+                        if top_p < 1.0:
+                            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                            cumsum_probs = torch.cumsum(sorted_probs, dim=-1)
+                            sorted_indices_to_remove = cumsum_probs > top_p
+                            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                            sorted_indices_to_remove[..., 0] = 0
+                            indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                            probs[indices_to_remove] = 0.0
+                            probs = probs / (probs.sum() + 1e-8)
+                        next_token = torch.multinomial(probs, num_samples=1).unsqueeze(0)
+                    else:
+                        next_token = torch.argmax(next_logits, dim=-1, keepdim=True).unsqueeze(0)
+
+                    curr_ids = torch.cat([curr_ids, next_token], dim=-1)
+                    if eos_id is not None and next_token.item() == eos_id:
+                        break
+                generated_ids = curr_ids[0]
 
         self.hook_manager.remove_hooks()
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return self.tokenizer.decode(generated_ids, skip_special_tokens=True)
