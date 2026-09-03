@@ -61,11 +61,11 @@ class FeatureExplainer:
             tok_strs = []
             for t in s.tokens:
                 if t.activation_val > 0.1:
-                    tok_strs.append(f"[{t.token_str}|{t.activation_val:.2f}]")
+                    tok_strs.append(f"<<{t.token_str}>> ({t.activation_val:.2f})")
                 else:
                     tok_strs.append(t.token_str)
-            formatted.append(f"{i}. " + "".join(tok_strs))
-        return "\n".join(formatted)
+            formatted.append(f"Example {i}:\n" + "".join(tok_strs))
+        return "\n\n".join(formatted)
 
     def explain_feature(self, feature_id: int, snippets: List[ActivatingSnippet]) -> Tuple[str, str]:
         """
