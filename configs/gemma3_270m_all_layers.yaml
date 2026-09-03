@@ -47,7 +47,8 @@ lr_warmup_steps: 1000
 total_steps: 25000
 checkpoint_steps: 2500
 dead_feature_threshold: 1000000
-use_ghost_grads: false     # Native Subspace Aux Loss handles anti-death
+use_ghost_grads: true
+ghost_grad_coeff: 0.1
 output_dir: "checkpoints/gemma3_270m_spherical_tree_sasa"
 wandb_project: "gemma3-270m-sae"
 seed: 42
