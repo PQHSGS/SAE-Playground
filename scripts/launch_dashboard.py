@@ -88,16 +88,17 @@ def main():
 
     model_slug = model_name.split("/")[-1].lower()
     base_slug = model_slug.split("-")[0].split("_")[0]
-    raw_candidates = [
-        f"data/{model_slug}_feature_metadata.json",
-        f"data/{base_slug}_feature_metadata.json",
-        f"data/{os.path.basename(checkpoint_dir)}_feature_metadata.json",
-        "data/planckgpt_feature_metadata.json" if "planck" in model_slug else None,
-        "data/gemma3_270m_feature_metadata.json" if "gemma" in model_slug else None,
-        "data/feature_metadata.json",
-        "data/auto_interp_results.json"
+    metadata_candidates = [
+        p for p in [
+            f"data/{model_slug}_feature_metadata.json",
+            f"data/{base_slug}_feature_metadata.json",
+            f"data/{os.path.basename(checkpoint_dir)}_feature_metadata.json",
+            "data/planckgpt_feature_metadata.json" if "planck" in model_slug else None,
+            "data/gemma3_270m_feature_metadata.json" if "gemma" in model_slug else None,
+            "data/feature_metadata.json",
+            "data/auto_interp_results.json",
+        ] if p and os.path.exists(p)
     ]
-    metadata_candidates = [c for c in raw_candidates if c is not None]
     for meta_path in metadata_candidates:
         if os.path.exists(meta_path):
             try:
