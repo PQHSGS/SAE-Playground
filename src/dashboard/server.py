@@ -142,7 +142,7 @@ async def layers_handler(request: web.Request) -> web.Response:
 
 async def select_layer_handler(request: web.Request) -> web.Response:
     data = await request.json()
-    hook_point = data.get("hook_point")
+    hook_point = data.get("hook_point") or data.get("layer")
     dict_model = get_or_load_dictionary(hook_point)
     if dict_model is None:
         return web.json_response({"error": f"Layer '{hook_point}' not found in checkpoints."}, status=404)

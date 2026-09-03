@@ -85,16 +85,18 @@ def main():
     state.available_layers = available_layers
     state.checkpoint_dir = checkpoint_dir
 
-    # 3. Load pre-computed feature metadata / auto-interp results if present
     model_slug = model_name.split("/")[-1].lower()
-    metadata_candidates = [
+    base_slug = model_slug.split("-")[0].split("_")[0]
+    raw_candidates = [
         f"data/{model_slug}_feature_metadata.json",
+        f"data/{base_slug}_feature_metadata.json",
         f"data/{os.path.basename(checkpoint_dir)}_feature_metadata.json",
-        "data/gemma3_270m_feature_metadata.json",
-        "data/planckgpt_feature_metadata.json",
+        "data/planckgpt_feature_metadata.json" if "planck" in model_slug else None,
+        "data/gemma3_270m_feature_metadata.json" if "gemma" in model_slug else None,
         "data/feature_metadata.json",
         "data/auto_interp_results.json"
     ]
+    metadata_candidates = [c for c in raw_candidates if c is not None]
     for meta_path in metadata_candidates:
         if os.path.exists(meta_path):
             try:
