@@ -40,7 +40,20 @@ function initTabs() {
 
 async function initLayers() {
   const selectEl = document.getElementById("layer-select");
+  const modelTag = document.getElementById("current-model-tag");
   try {
+    try {
+      const healthRes = await fetch("/api/health");
+      if (healthRes.ok) {
+        const healthData = await healthRes.json();
+        if (modelTag && healthData.model_name) {
+          modelTag.innerText = healthData.model_name.replace("cattonpm/", "").replace("google/", "");
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch health:", e);
+    }
+
     const res = await fetch("/api/layers");
     if (!res.ok) return;
     const data = await res.json();

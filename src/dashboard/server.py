@@ -13,6 +13,7 @@ from src.architectures.registry import get_dictionary_cls
 class DashboardState:
     model = None
     tokenizer = None
+    model_name: str = ""
     active_hook_point: str = ""
     checkpoint_dir: str = ""
     available_layers: Dict[str, str] = {}  # {hook_point: subfolder_path}
@@ -127,6 +128,7 @@ async def health_handler(request: web.Request) -> web.Response:
     return web.json_response({
         "status": "online",
         "model_loaded": state.model is not None,
+        "model_name": state.model_name or (state.model.__class__.__name__ if state.model else "Base LLM"),
         "active_layer": state.active_hook_point,
         "available_layers": list(state.available_layers.keys()),
         "total_layers": len(state.available_layers),

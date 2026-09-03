@@ -64,6 +64,7 @@ def main():
     model, tokenizer = load_model_and_tokenizer(model_name, device_map=args.device)
     state.model = model
     state.tokenizer = tokenizer
+    state.model_name = model_name
     state.unembedding_weights = get_unembedding_weights(model).to(args.device)
 
     # 2. Discover Available Layers (Multi-Layer or Single-Layer Checkpoint)
