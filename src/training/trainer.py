@@ -146,17 +146,19 @@ class DictionaryTrainer:
                 out = sae(x_in, target=target, dead_mask=dead_mask)
                 layer_loss = out.loss
 
-                # Ghost gradients for reviving dead latents
-                if self.config.use_ghost_grads and dead_mask.any() and "pre_acts" in out.extra_dict:
-                    residual = (target - out.reconstructed).contiguous()
-                    ghost_loss = compute_ghost_gradients_loss(
-                        residual=residual,
-                        pre_acts=out.extra_dict["pre_acts"],
-                        w_dec=sae.get_decoder_weights(),
-                        dead_mask=dead_mask,
-                        ghost_grad_coeff=self.config.ghost_grad_coeff,
-                    )
-                    layer_loss = layer_loss + ghost_loss
+                # Ghost gradients for reviving dead latents (universal across all architectures)
+                if self.config.use_ghost_grads and dead_mask.any():
+                    pre_acts = out.extra_dict.get("raw_pre_acts", out.extra_dict.get("pre_acts"))
+                    if pre_acts is not None:
+                        residual = (target - out.reconstructed).contiguous()
+                        ghost_loss = compute_ghost_gradients_loss(
+                            residual=residual,
+                            pre_acts=pre_acts,
+                            w_dec=sae.get_decoder_weights(),
+                            dead_mask=dead_mask,
+                            ghost_grad_coeff=self.config.ghost_grad_coeff,
+                        )
+                        layer_loss = layer_loss + ghost_loss
 
                 # Immediate backward pass frees autograd graph for x_in (VRAM Shield)
                 layer_loss.backward()

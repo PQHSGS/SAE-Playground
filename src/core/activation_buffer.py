@@ -205,11 +205,14 @@ class ActivationBuffer:
         end = start + self.batch_size
         self.buffer_idx = end
 
-        # Helper to retrieve, transfer to GPU, and apply scale normalization
+        # Helper to retrieve, transfer to GPU, and apply universal mean centering and scale normalization
         def get_slice(hp: str) -> torch.Tensor:
             tensor = self.buffer[hp][start:end].to(self.device, non_blocking=True).contiguous()
-            if self.normalize_activations and hp in self.scale_factors:
-                tensor = tensor * self.scale_factors[hp]
+            if self.normalize_activations:
+                if hp in self.means:
+                    tensor = (tensor - self.means[hp]).contiguous()
+                if hp in self.scale_factors:
+                    tensor = (tensor * self.scale_factors[hp]).contiguous()
             return tensor
 
         # Multi-dictionary mode (Multi-SAE and Multi-Transcoder)
