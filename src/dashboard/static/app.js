@@ -207,7 +207,11 @@ function renderHeroCard(data, featureId) {
 
   if (titleEl) titleEl.innerText = displayTitle;
   if (expEl) expEl.innerText = data.explanation || `Feature #${featureId}`;
-  if (maxActEl) maxActEl.innerText = `+${data.max_activation.toFixed(2)}`;
+  if (maxActEl) {
+    maxActEl.innerText = data.max_activation > 1e-4 
+      ? `+${data.max_activation.toFixed(2)}`
+      : `0.00 (Unactivated in general suite)`;
+  }
   if (firingRateEl) firingRateEl.innerText = `${(data.firing_rate * 100).toFixed(3)}%`;
 }
 
@@ -215,12 +219,19 @@ function renderContextSnippets(snippets) {
   const container = document.getElementById("snippets-container");
   if (!container) return;
 
-  if (!snippets || snippets.length === 0) {
-    container.innerHTML = '<div class="empty-msg">No activating dataset examples recorded for this feature.</div>';
+  const validSnippets = (snippets || []).filter(s => s.max_activation > 1e-4);
+
+  if (validSnippets.length === 0) {
+    container.innerHTML = `
+      <div class="empty-msg" style="padding:20px; background:#0b0f19; border:1px dashed #334155; border-radius:8px; text-align:center; color:#94a3b8;">
+        <p style="font-size:13.5px; font-weight:700; color:#e2e8f0; margin-bottom:6px;">🔍 Specialized Feature — No Activations on General Reference Suite</p>
+        <p style="font-size:12px; line-height:1.5; max-width:600px; margin:0 auto; color:#94a3b8;">This feature did not activate on the general reference sentences. Enter custom prompts (e.g. IOI, code syntax, or specialized domain texts) in the <a href="javascript:void(0)" onclick="document.querySelector('[data-tab=tab-analyze]').click();" style="color:#a78bfa; font-weight:700; text-decoration:underline;">Live Prompt Analyzer</a> to see it activate dynamically!</p>
+      </div>
+    `;
     return;
   }
 
-  container.innerHTML = snippets.map((snip, sIdx) => {
+  container.innerHTML = validSnippets.map((snip, sIdx) => {
     const maxSnippetAct = Math.max(...snip.tokens.map(t => t.act), 1e-5);
     const tokenSpans = snip.tokens.map(t => {
       const intensity = Math.min(1.0, Math.max(0.0, t.act / maxSnippetAct));
@@ -473,6 +484,36 @@ window.jumpToFeature = function(featureId) {
       t.click();
     }
   });
+
+  // If we have live analyzed tokens data where this feature fired, inject live snippet into cache
+  if (analyzedTokensData && analyzedTokensData.length > 0) {
+    const fullText = analyzedTokensData.map(t => t.token_str).join("");
+    const tokenActs = analyzedTokensData.map(t => {
+      const featMatch = (t.top_features || []).find(f => f.feature_id === featureId);
+      return {
+        token: t.token_str,
+        act: featMatch ? featMatch.activation : 0.0
+      };
+    });
+    const maxAct = Math.max(...tokenActs.map(t => t.act), 0.0);
+    if (maxAct > 1e-4) {
+      const liveSnippet = {
+        context_text: fullText,
+        max_activation: maxAct,
+        tokens: tokenActs
+      };
+      const cacheKey = `${currentActiveLayer}_${featureId}`;
+      const cached = featureDetailsCache.get(cacheKey) || {};
+      const existing = cached.snippets || [];
+      const alreadyHas = existing.some(s => s.context_text === fullText);
+      if (!alreadyHas) {
+        cached.snippets = [liveSnippet, ...existing];
+      }
+      cached.max_activation = Math.max(cached.max_activation || 0.0, maxAct);
+      featureDetailsCache.set(cacheKey, cached);
+    }
+  }
+
   selectFeature(featureId);
   const heroCard = document.querySelector(".hero-card");
   if (heroCard) {

@@ -22,7 +22,10 @@ class DashboardState:
     feature_metadata: Dict[str, Dict[int, Dict]] = {}  # {hook_point: {feat_id: meta}}
     attribution_engine = None
     sample_contexts: List[str] = [
+        "John and Mary went to the store, John gave a drink to Mary",
+        "Alice and Bob were playing chess, Alice handed the trophy to Bob",
         "The Eiffel Tower in Paris, France stands on the Champ de Mars near the Seine river.",
+        "The capital of France is Paris, while the capital of Germany is Berlin.",
         "Quantum mechanics reveals that particles exist in probabilistic superposition wavefunctions.",
         "In deep learning, transformer self-attention enables global contextual token representations.",
         "def quicksort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [x for x in arr if x == pivot] + quicksort([x for x in arr if x > pivot])",
@@ -83,7 +86,9 @@ def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, 
     """Computes or retrieves top activating context snippets with token-level activation values."""
     meta = get_feature_meta(target_layer, feature_id)
     if "snippets" in meta and meta["snippets"]:
-        return meta["snippets"]
+        valid_cached = [s for s in meta["snippets"] if s.get("max_activation", 0.0) > 1e-4]
+        if valid_cached:
+            return valid_cached
 
     if state.model is None or state.tokenizer is None:
         return []
@@ -106,21 +111,22 @@ def get_top_activating_snippets(dict_model: torch.nn.Module, target_layer: str, 
             feat_acts = f[:, feature_id].tolist()
             max_act = max(feat_acts) if feat_acts else 0.0
 
-            tokens = [
-                {"token": state.tokenizer.decode([tid]), "act": float(a)}
-                for tid, a in zip(inputs["input_ids"][0], feat_acts)
-            ]
-
-            snippets.append({
-                "context_text": text,
-                "max_activation": float(max_act),
-                "tokens": tokens
-            })
+            if max_act > 1e-4:
+                tokens = [
+                    {"token": state.tokenizer.decode([tid]), "act": float(a)}
+                    for tid, a in zip(inputs["input_ids"][0], feat_acts)
+                ]
+                snippets.append({
+                    "context_text": text,
+                    "max_activation": float(max_act),
+                    "tokens": tokens
+                })
 
     hook_mgr.remove_hooks()
     snippets.sort(key=lambda s: s["max_activation"], reverse=True)
     top_snippets = snippets[:4]
-    meta["snippets"] = top_snippets  # Cache for future instant lookups
+    if top_snippets:
+        meta["snippets"] = top_snippets  # Cache for future instant lookups
     return top_snippets
 
 
@@ -355,6 +361,17 @@ async def analyze_text_handler(request: web.Request) -> web.Response:
             if val <= 1e-4:
                 continue
             fmeta = get_feature_meta(target_layer, feat_idx)
+            # Live-cache the firing snippet into feature metadata for instant Tab 1 inspection
+            if "snippets" not in fmeta:
+                fmeta["snippets"] = []
+            if not any(s.get("context_text") == text for s in fmeta["snippets"]):
+                fmeta["snippets"].insert(0, {
+                    "context_text": text,
+                    "max_activation": float(val),
+                    "tokens": [{"token": state.tokenizer.decode([tid]), "act": float(f[p, feat_idx].item())} for p, tid in enumerate(token_ids)]
+                })
+            fmeta["max_activation"] = max(fmeta.get("max_activation", 0.0), float(val))
+
             title = fmeta.get("title", f"Feature #{feat_idx}")
             exp = fmeta.get("explanation", f"Feature #{feat_idx}")
             promoted = fmeta.get("top_promoted_tokens", [])
